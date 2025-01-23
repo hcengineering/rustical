@@ -2851,7 +2851,6 @@ dependencies = [
  "rustical_caldav",
  "rustical_carddav",
  "rustical_dav",
- "rustical_frontend",
  "rustical_nextcloud_login",
  "rustical_store",
  "rustical_store_huly",

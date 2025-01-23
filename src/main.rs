@@ -109,9 +109,9 @@ async fn main() -> Result<()> {
                     cal_store.clone(),
                     subscription_store.clone(),
                     user_store.clone(),
-                    config.frontend.clone(),
-                    config.nextcloud_login.clone(),
-                    nextcloud_flows.clone(),
+                    //config.frontend.clone(),
+                    //config.nextcloud_login.clone(),
+                    //nextcloud_flows.clone(),
                 )
             })
             .bind((config.http.host, config.http.port))?
@@ -188,12 +188,12 @@ mod tests {
             cal_store,
             subscription_store,
             user_store,
-            FrontendConfig {
-                enabled: false,
-                secret_key: generate_frontend_secret(),
-            },
-            NextcloudLoginConfig { enabled: false },
-            Arc::new(NextcloudFlows::default()),
+            // FrontendConfig {
+            //     enabled: false,
+            //     secret_key: generate_frontend_secret(),
+            // },
+            // NextcloudLoginConfig { enabled: false },
+            // Arc::new(NextcloudFlows::default()),
         );
         let app = actix_web::test::init_service(app).await;
         let req = TestRequest::get().uri("/").to_request();

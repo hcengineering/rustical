@@ -4,8 +4,8 @@ use actix_web::middleware::NormalizePath;
 use actix_web::{web, App};
 use rustical_caldav::caldav_service;
 use rustical_carddav::carddav_service;
-use rustical_frontend::{configure_frontend, FrontendConfig};
-use rustical_nextcloud_login::{configure_nextcloud_login, NextcloudFlows};
+//use rustical_frontend::{configure_frontend, FrontendConfig};
+//use rustical_nextcloud_login::{configure_nextcloud_login, NextcloudFlows};
 use rustical_store::auth::AuthenticationProvider;
 use rustical_store::{AddressbookStore, CalendarStore, SubscriptionStore};
 use std::sync::Arc;
@@ -18,9 +18,9 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
     cal_store: Arc<CS>,
     subscription_store: Arc<S>,
     auth_provider: Arc<impl AuthenticationProvider>,
-    frontend_config: FrontendConfig,
-    nextcloud_login_config: NextcloudLoginConfig,
-    nextcloud_flows_state: Arc<NextcloudFlows>,
+    //frontend_config: FrontendConfig,
+    //nextcloud_login_config: NextcloudLoginConfig,
+    //nextcloud_flows_state: Arc<NextcloudFlows>,
 ) -> App<
     impl ServiceFactory<
         ServiceRequest,
@@ -50,7 +50,7 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
                 .service(web::redirect("/caldav", "/caldav"))
                 .service(web::redirect("/carddav", "/carddav")),
         );
-
+    /*
     if frontend_config.enabled {
         app = app
             .service(web::scope("/frontend").configure(|cfg| {
@@ -69,5 +69,6 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
             configure_nextcloud_login(cfg, nextcloud_flows_state, auth_provider.clone())
         });
     }
+    */
     app
 }
