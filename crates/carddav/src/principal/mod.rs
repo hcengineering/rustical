@@ -121,6 +121,7 @@ impl<A: AddressbookStore> ResourceService for PrincipalResourceService<A> {
 
     async fn get_resource(
         &self,
+        _user: &User,
         (principal,): &Self::PathComponents,
     ) -> Result<Self::Resource, Self::Error> {
         Ok(PrincipalResource {
@@ -130,6 +131,7 @@ impl<A: AddressbookStore> ResourceService for PrincipalResourceService<A> {
 
     async fn get_members(
         &self,
+        _user: &User,
         (principal,): &Self::PathComponents,
     ) -> Result<Vec<(String, Self::MemberType)>, Self::Error> {
         let addressbooks = self.addr_store.get_addressbooks(principal).await?;

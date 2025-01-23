@@ -29,7 +29,7 @@ pub(crate) async fn route_propfind<R: ResourceService>(
     MultistatusElement<<R::Resource as Resource>::Prop, <R::MemberType as Resource>::Prop>,
     R::Error,
 > {
-    let resource = resource_service.get_resource(&path).await?;
+    let resource = resource_service.get_resource(&user, &path).await?;
     let privileges = resource.get_user_privileges(&user)?;
     if !privileges.has(&UserPrivilege::Read) {
         return Err(Error::Unauthorized.into());
@@ -56,7 +56,7 @@ pub(crate) async fn route_propfind<R: ResourceService>(
 
     let mut member_responses = Vec::new();
     if depth != Depth::Zero {
-        for (subpath, member) in resource_service.get_members(&path).await? {
+        for (subpath, member) in resource_service.get_members(&user, &path).await? {
             member_responses.push(member.propfind(
                 &format!("{}/{}", req.path().trim_end_matches('/'), subpath),
                 &props,

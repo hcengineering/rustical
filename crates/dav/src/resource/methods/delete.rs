@@ -25,14 +25,14 @@ pub async fn route_delete<R: ResourceService>(
         .map(|val| matches!(val.to_str(), Ok("1")))
         .unwrap_or(false);
 
-    let resource = resource_service.get_resource(&path).await?;
+    let resource = resource_service.get_resource(&user, &path).await?;
     let privileges = resource.get_user_privileges(&user)?;
     if !privileges.has(&UserPrivilege::Write) {
         // TODO: Actually the spec wants us to look whether we have unbind access in the parent
         // collection
         return Err(Error::Unauthorized.into());
     }
-    resource_service.delete_resource(&path, !no_trash).await?;
+    resource_service.delete_resource(&user, &path, !no_trash).await?;
 
     Ok(HttpResponse::Ok().body(""))
 }

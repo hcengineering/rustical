@@ -129,6 +129,7 @@ impl<C: CalendarStore> ResourceService for CalendarObjectResourceService<C> {
 
     async fn get_resource(
         &self,
+        _user: &User,
         CalendarObjectPathComponents {
             principal,
             cal_id,
@@ -147,6 +148,7 @@ impl<C: CalendarStore> ResourceService for CalendarObjectResourceService<C> {
 
     async fn delete_resource(
         &self,
+        _user: &User,
         CalendarObjectPathComponents {
             principal,
             cal_id,

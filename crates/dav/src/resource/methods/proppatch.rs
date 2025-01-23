@@ -80,7 +80,7 @@ pub(crate) async fn route_proppatch<R: ResourceService>(
         operations,
     ) = XmlDocument::parse_str(&body).map_err(Error::XmlDeserializationError)?;
 
-    let mut resource = resource_service.get_resource(&path).await?;
+    let mut resource = resource_service.get_resource(&user, &path).await?;
     let privileges = resource.get_user_privileges(&user)?;
     if !privileges.has(&UserPrivilege::Write) {
         return Err(Error::Unauthorized.into());
@@ -152,7 +152,7 @@ pub(crate) async fn route_proppatch<R: ResourceService>(
 
     if props_not_found.is_empty() && props_conflict.is_empty() {
         // Only save if no errors occured
-        resource_service.save_resource(&path, resource).await?;
+        resource_service.save_resource(&user, &path, resource).await?;
     }
 
     Ok(MultistatusElement {
