@@ -5,6 +5,7 @@ use actix_web::{web, App};
 use rustical_caldav::caldav_service;
 use rustical_carddav::carddav_service;
 use rustical_frontend::{configure_frontend, FrontendConfig};
+//use rustical_frontend::{configure_frontend, FrontendConfig};
 use rustical_store::auth::AuthenticationProvider;
 use rustical_store::{AddressbookStore, CalendarStore, SubscriptionStore};
 use std::sync::Arc;
@@ -15,7 +16,7 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
     cal_store: Arc<CS>,
     subscription_store: Arc<S>,
     auth_provider: Arc<impl AuthenticationProvider>,
-    frontend_config: FrontendConfig,
+    //frontend_config: FrontendConfig,
 ) -> App<
     impl ServiceFactory<
         ServiceRequest,
@@ -45,7 +46,7 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
                 .service(web::redirect("/caldav", "/caldav"))
                 .service(web::redirect("/carddav", "/carddav")),
         );
-
+    /*
     if frontend_config.enabled {
         app = app
             .service(web::scope("/frontend").configure(|cfg| {
@@ -59,5 +60,6 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
             }))
             .service(web::redirect("/", "/frontend").see_other());
     }
+    */
     app
 }

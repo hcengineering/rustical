@@ -5,6 +5,7 @@ use pbkdf2::Params;
 use rand::{rngs::OsRng, RngCore};
 use rustical_frontend::FrontendConfig;
 use rustical_store::auth::{StaticUserStoreConfig, User};
+//use rustical_frontend::FrontendConfig;
 
 use crate::config::{
     AuthConfig, Config, DataStoreConfig, DavPushConfig, HttpConfig, SqliteDataStoreConfig,
@@ -43,10 +44,12 @@ pub fn cmd_gen_config(_args: GenConfigArgs) -> anyhow::Result<()> {
             db_url: "".to_owned(),
         }),
         tracing: TracingConfig::default(),
+        /*
         frontend: FrontendConfig {
             secret_key: generate_frontend_secret(),
             enabled: true,
         },
+        */
         dav_push: DavPushConfig::default(),
     };
     let generated_config = toml::to_string(&config)?;

@@ -1,4 +1,4 @@
-use rustical_frontend::FrontendConfig;
+//use rustical_frontend::FrontendConfig;
 use rustical_store::auth::StaticUserStoreConfig;
 use serde::{Deserialize, Serialize};
 
@@ -70,7 +70,7 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub http: HttpConfig,
-    pub frontend: FrontendConfig,
+    //pub frontend: FrontendConfig,
     #[serde(default)]
     pub tracing: TracingConfig,
     #[serde(default)]
