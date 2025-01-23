@@ -29,6 +29,7 @@ actix-session = { version = "0.10", features = ["cookie-session"] }
 actix-web-httpauth = "0.8"
 anyhow = { version = "1.0", features = ["backtrace"] }
 serde = { version = "1.0", features = ["serde_derive", "derive", "rc"] }
+serde_json = { version = "1.0" }
 futures-util = "0.3"
 password-auth = { version = "1.0", features = ["argon2", "pbkdf2"] }
 pbkdf2 = { version = "0.12", features = ["simple"] }
@@ -86,6 +87,7 @@ toml = "0.8"
 rustical_dav = { path = "./crates/dav/" }
 rustical_store = { path = "./crates/store/" }
 rustical_store_sqlite = { path = "./crates/store_sqlite/" }
+rustical_store_huly = { path = "./crates/store_huly/" }
 rustical_caldav = { path = "./crates/caldav/" }
 rustical_carddav = { path = "./crates/carddav/" }
 rustical_frontend = { path = "./crates/frontend/" }
@@ -109,6 +111,7 @@ reqwest = { version = "0.12", features = [
 [dependencies]
 rustical_store = { workspace = true }
 rustical_store_sqlite = { workspace = true }
+rustical_store_huly = { workspace = true }
 rustical_caldav = { workspace = true }
 rustical_carddav = { workspace = true }
 rustical_frontend = { workspace = true }
