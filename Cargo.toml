@@ -90,7 +90,7 @@ rustical_store_sqlite = { path = "./crates/store_sqlite/" }
 rustical_store_huly = { path = "./crates/store_huly/" }
 rustical_caldav = { path = "./crates/caldav/" }
 rustical_carddav = { path = "./crates/carddav/" }
-rustical_frontend = { path = "./crates/frontend/" }
+#rustical_frontend = { path = "./crates/frontend/" }
 rustical_xml = { path = "./crates/xml/" }
 chrono-tz = "0.10.0"
 rand = "0.8"
@@ -114,7 +114,7 @@ rustical_store_sqlite = { workspace = true }
 rustical_store_huly = { workspace = true }
 rustical_caldav = { workspace = true }
 rustical_carddav = { workspace = true }
-rustical_frontend = { workspace = true }
+#rustical_frontend = { workspace = true }
 actix-web = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }

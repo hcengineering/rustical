@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
                     cal_store.clone(),
                     subscription_store.clone(),
                     user_store.clone(),
-                    config.frontend.clone(),
+                    //config.frontend.clone(),
                 )
             })
             .bind((config.http.host, config.http.port))?

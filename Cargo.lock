@@ -2746,7 +2746,6 @@ dependencies = [
  "rustical_caldav",
  "rustical_carddav",
  "rustical_dav",
- "rustical_frontend",
  "rustical_store",
  "rustical_store_huly",
  "rustical_store_sqlite",
