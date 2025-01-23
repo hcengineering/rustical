@@ -330,10 +330,10 @@ impl<C: CalendarStore, S: SubscriptionStore> ResourceService for CalendarResourc
 
     async fn get_resource(
         &self,
-        _user: &User,
-        (principal, cal_id): &Self::PathComponents,
+        user: &User,
+        (_principal, cal_id): &Self::PathComponents,
     ) -> Result<Self::Resource, Error> {
-        let calendar = self.cal_store.get_calendar(principal, cal_id).await?;
+        let calendar = self.cal_store.get_calendar(user, cal_id).await?;
         Ok(CalendarResource {
             cal: calendar,
             read_only: self.cal_store.is_read_only(),
@@ -342,12 +342,12 @@ impl<C: CalendarStore, S: SubscriptionStore> ResourceService for CalendarResourc
 
     async fn get_members(
         &self,
-        _user: &User,
+        user: &User,
         (principal, cal_id): &Self::PathComponents,
     ) -> Result<Vec<(String, Self::MemberType)>, Self::Error> {
         Ok(self
             .cal_store
-            .get_objects(principal, cal_id)
+            .get_objects(user, cal_id)
             .await?
             .into_iter()
             .map(|object| {

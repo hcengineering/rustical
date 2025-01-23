@@ -28,12 +28,12 @@ pub async fn get_event<C: CalendarStore>(
         return Ok(HttpResponse::Unauthorized().body(""));
     }
 
-    let calendar = store.get_calendar(&principal, &cal_id).await?;
+    let calendar = store.get_calendar(&user, &cal_id).await?;
     if user.id != calendar.principal {
         return Ok(HttpResponse::Unauthorized().body(""));
     }
 
-    let event = store.get_object(&principal, &cal_id, &object_id).await?;
+    let event = store.get_object(&user, &cal_id, &object_id).await?;
 
     Ok(HttpResponse::Ok()
         .insert_header(("ETag", event.get_etag()))
@@ -68,7 +68,7 @@ pub async fn put_event<C: CalendarStore>(
 
     let object = CalendarObject::from_ics(object_id, body)?;
     store
-        .put_object(principal, cal_id, object, overwrite)
+        .put_object(&user, cal_id, object, overwrite)
         .await?;
 
     Ok(HttpResponse::Created().body(""))

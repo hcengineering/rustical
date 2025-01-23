@@ -1,3 +1,4 @@
+use crate::auth::User;
 use crate::calendar::{Calendar, CalendarObject};
 use crate::error::Error;
 use async_trait::async_trait;
@@ -11,8 +12,8 @@ pub struct CalendarQuery {
 
 #[async_trait]
 pub trait CalendarStore: Send + Sync + 'static {
-    async fn get_calendar(&self, principal: &str, id: &str) -> Result<Calendar, Error>;
-    async fn get_calendars(&self, principal: &str) -> Result<Vec<Calendar>, Error>;
+    async fn get_calendar(&self, principal: &User, id: &str) -> Result<Calendar, Error>;
+    async fn get_calendars(&self, principal: &User) -> Result<Vec<Calendar>, Error>;
     async fn get_deleted_calendars(&self, principal: &str) -> Result<Vec<Calendar>, Error>;
 
     async fn update_calendar(
@@ -41,7 +42,7 @@ pub trait CalendarStore: Send + Sync + 'static {
     /// is only meant to do some prefiltering
     async fn calendar_query(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
         _query: CalendarQuery,
     ) -> Result<Vec<CalendarObject>, Error> {
@@ -50,25 +51,25 @@ pub trait CalendarStore: Send + Sync + 'static {
 
     async fn get_objects(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
     ) -> Result<Vec<CalendarObject>, Error>;
     async fn get_object(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
         object_id: &str,
     ) -> Result<CalendarObject, Error>;
     async fn put_object(
         &self,
-        principal: String,
+        principal: &User,
         cal_id: String,
         object: CalendarObject,
         overwrite: bool,
     ) -> Result<(), Error>;
     async fn delete_object(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
         object_id: &str,
         use_trashbin: bool,
