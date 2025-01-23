@@ -2854,6 +2854,7 @@ dependencies = [
  "rustical_frontend",
  "rustical_nextcloud_login",
  "rustical_store",
+ "rustical_store_huly",
  "rustical_store_sqlite",
  "serde",
  "sqlx",
@@ -3004,6 +3005,25 @@ dependencies = [
  "thiserror 2.0.11",
  "tokio",
  "toml",
+ "tracing",
+]
+
+[[package]]
+name = "rustical_store_huly"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "chrono-tz",
+ "ical",
+ "reqwest",
+ "rustical_store",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.11",
+ "tokio",
  "tracing",
 ]
 
