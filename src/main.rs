@@ -9,9 +9,9 @@ use config::{DataStoreConfig, SqliteDataStoreConfig};
 use rustical_dav::push::push_notifier;
 use rustical_store::auth::StaticUserStore;
 use rustical_store::{AddressbookStore, CalendarStore, CollectionOperation, SubscriptionStore};
-use rustical_store_sqlite::addressbook_store::SqliteAddressbookStore;
-use rustical_store_sqlite::calendar_store::SqliteCalendarStore;
-use rustical_store_sqlite::{create_db_pool, SqliteStore};
+// use rustical_store_sqlite::addressbook_store::SqliteAddressbookStore;
+// use rustical_store_sqlite::calendar_store::SqliteCalendarStore;
+// use rustical_store_sqlite::{create_db_pool, SqliteStore};
 use setup_tracing::setup_tracing;
 use std::fs;
 use std::sync::Arc;
@@ -49,6 +49,10 @@ async fn get_data_stores(
     Arc<impl SubscriptionStore>,
     Receiver<CollectionOperation>,
 )> {
+    let (_, recv) = tokio::sync::mpsc::channel(1000);
+    let store = Arc::new(rustical_store_huly::HulyStore::new());
+    Ok((store.clone(), store.clone(), store.clone(), recv))
+/*
     Ok(match &config {
         DataStoreConfig::Sqlite(SqliteDataStoreConfig { db_url }) => {
             let db = create_db_pool(db_url, migrate).await?;
@@ -61,6 +65,7 @@ async fn get_data_stores(
             (addressbook_store, cal_store, subscription_store, recv)
         }
     })
+*/
 }
 
 #[tokio::main]
