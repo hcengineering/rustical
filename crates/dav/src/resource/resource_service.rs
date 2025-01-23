@@ -4,6 +4,7 @@ use actix_web::test::TestRequest;
 use actix_web::web::Data;
 use actix_web::{dev::ResourceMap, http::Method, web, ResponseError};
 use async_trait::async_trait;
+use rustical_store::auth::User;
 use serde::Deserialize;
 use std::str::FromStr;
 
@@ -19,6 +20,7 @@ pub trait ResourceService: Sized + 'static {
 
     async fn get_members(
         &self,
+        _user: &User,
         _path_components: &Self::PathComponents,
     ) -> Result<Vec<(String, Self::MemberType)>, Self::Error> {
         Ok(vec![])
@@ -26,10 +28,12 @@ pub trait ResourceService: Sized + 'static {
 
     async fn get_resource(
         &self,
+        _user: &User,
         _path: &Self::PathComponents,
     ) -> Result<Self::Resource, Self::Error>;
     async fn save_resource(
         &self,
+        _user: &User,
         _path: &Self::PathComponents,
         _file: Self::Resource,
     ) -> Result<(), Self::Error> {
@@ -37,6 +41,7 @@ pub trait ResourceService: Sized + 'static {
     }
     async fn delete_resource(
         &self,
+        _user: &User,
         _path: &Self::PathComponents,
         _use_trashbin: bool,
     ) -> Result<(), Self::Error> {

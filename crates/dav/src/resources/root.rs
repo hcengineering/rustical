@@ -60,7 +60,7 @@ impl<PR: Resource + NamedRoute> ResourceService for RootResourceService<PR> {
     type Resource = RootResource<PR>;
     type Error = PR::Error;
 
-    async fn get_resource(&self, _: &()) -> Result<Self::Resource, Self::Error> {
+    async fn get_resource(&self, _user: &User, _: &()) -> Result<Self::Resource, Self::Error> {
         Ok(RootResource::<PR>::default())
     }
 }

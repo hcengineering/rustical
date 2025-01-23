@@ -81,6 +81,7 @@ impl<C: CalendarStore> ResourceService for CalendarSetResourceService<C> {
 
     async fn get_resource(
         &self,
+        _user: &User,
         (principal,): &Self::PathComponents,
     ) -> Result<Self::Resource, Self::Error> {
         Ok(CalendarSetResource {
@@ -91,6 +92,7 @@ impl<C: CalendarStore> ResourceService for CalendarSetResourceService<C> {
 
     async fn get_members(
         &self,
+        _user: &User,
         (principal,): &Self::PathComponents,
     ) -> Result<Vec<(String, Self::MemberType)>, Self::Error> {
         let calendars = self.cal_store.get_calendars(principal).await?;
