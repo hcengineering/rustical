@@ -60,14 +60,14 @@ pub fn caldav_service<
                 }),
             )
             .app_data(Data::from(store.clone()))
-            .app_data(Data::from(birthday_store.clone()))
+            //.app_data(Data::from(birthday_store.clone()))
             .app_data(Data::from(subscription_store))
             .service(RootResourceService::<PrincipalResource>::default().actix_resource())
             .service(
                 web::scope("/principal").service(
                     web::scope("/{principal}")
                         .service(PrincipalResourceService{auth_provider, home_set: &[
-                            ("calendar", false), ("birthdays", true)
+                            ("calendar", false), //("birthdays", true)
                         ]}.actix_resource().name(PrincipalResource::route_name()))
                         .service(web::scope("/calendar")
                             .service(CalendarSetResourceService::new(store.clone()).actix_resource())
@@ -80,6 +80,7 @@ pub fn caldav_service<
                                     ))
                             )
                         )
+                        /*
                         .service(web::scope("/birthdays")
                             .service(CalendarSetResourceService::new(birthday_store.clone()).actix_resource())
                             .service(
@@ -91,6 +92,7 @@ pub fn caldav_service<
                                     ))
                             )
                         )
+                        */
                 ),
             ).service(subscription_resource::<S>())
 }
