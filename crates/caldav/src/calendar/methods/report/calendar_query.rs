@@ -200,7 +200,7 @@ impl From<&CalendarQueryRequest> for CalendarQuery {
 
 pub async fn get_objects_calendar_query<C: CalendarStore>(
     cal_query: &CalendarQueryRequest,
-    principal: &str,
+    principal: &User,
     cal_id: &str,
     store: &C,
 ) -> Result<Vec<CalendarObject>, Error> {
@@ -221,7 +221,7 @@ pub async fn handle_calendar_query<C: CalendarStore>(
     cal_id: &str,
     cal_store: &C,
 ) -> Result<MultistatusElement<CalendarObjectPropWrapper, String>, Error> {
-    let objects = get_objects_calendar_query(&cal_query, principal, cal_id, cal_store).await?;
+    let objects = get_objects_calendar_query(&cal_query, user, cal_id, cal_store).await?;
 
     let props = match cal_query.prop {
         PropfindType::Allprop => {

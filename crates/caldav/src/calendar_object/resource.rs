@@ -135,7 +135,7 @@ impl<C: CalendarStore> ResourceService for CalendarObjectResourceService<C> {
 
     async fn get_resource(
         &self,
-        _user: &User,
+        user: &User,
         CalendarObjectPathComponents {
             principal,
             cal_id,
@@ -144,7 +144,7 @@ impl<C: CalendarStore> ResourceService for CalendarObjectResourceService<C> {
     ) -> Result<Self::Resource, Self::Error> {
         let object = self
             .cal_store
-            .get_object(principal, cal_id, object_id)
+            .get_object(user, cal_id, object_id)
             .await?;
         Ok(CalendarObjectResource {
             object,
@@ -154,7 +154,7 @@ impl<C: CalendarStore> ResourceService for CalendarObjectResourceService<C> {
 
     async fn delete_resource(
         &self,
-        _user: &User,
+        user: &User,
         CalendarObjectPathComponents {
             principal,
             cal_id,
@@ -163,7 +163,7 @@ impl<C: CalendarStore> ResourceService for CalendarObjectResourceService<C> {
         use_trashbin: bool,
     ) -> Result<(), Self::Error> {
         self.cal_store
-            .delete_object(principal, cal_id, object_id, use_trashbin)
+            .delete_object(user, cal_id, object_id, use_trashbin)
             .await?;
         Ok(())
     }

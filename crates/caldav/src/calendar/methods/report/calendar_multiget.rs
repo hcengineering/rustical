@@ -28,7 +28,7 @@ pub(crate) struct CalendarMultigetRequest {
 pub async fn get_objects_calendar_multiget<C: CalendarStore>(
     cal_query: &CalendarMultigetRequest,
     path: &str,
-    principal: &str,
+    principal: &User,
     cal_id: &str,
     store: &C,
 ) -> Result<(Vec<CalendarObject>, Vec<String>), Error> {
@@ -62,7 +62,7 @@ pub async fn handle_calendar_multiget<C: CalendarStore>(
     cal_store: &C,
 ) -> Result<MultistatusElement<CalendarObjectPropWrapper, String>, Error> {
     let (objects, not_found) =
-        get_objects_calendar_multiget(&cal_multiget, req.path(), principal, cal_id, cal_store)
+        get_objects_calendar_multiget(&cal_multiget, req.path(), user, cal_id, cal_store)
             .await?;
 
     let props = match cal_multiget.prop {
