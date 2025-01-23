@@ -1,14 +1,14 @@
 use async_trait::async_trait;
-use rustical_store::{Calendar, CalendarObject, CalendarStore, Error};
+use rustical_store::{auth::User, Calendar, CalendarObject, CalendarStore, Error};
 use super::HulyStore;
 
 #[async_trait]
 impl CalendarStore for HulyStore {
-    async fn get_calendar(&self, principal: &str, id: &str) -> Result<Calendar, Error> {
+    async fn get_calendar(&self, principal: &User, id: &str) -> Result<Calendar, Error> {
         Err(Error::NotFound)
     }
 
-    async fn get_calendars(&self, principal: &str) -> Result<Vec<Calendar>, Error> {
+    async fn get_calendars(&self, principal: &User) -> Result<Vec<Calendar>, Error> {
         Err(Error::NotFound)
     }
 
@@ -53,7 +53,7 @@ impl CalendarStore for HulyStore {
 
     async fn get_objects(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
     ) -> Result<Vec<CalendarObject>, Error> {
         Err(Error::NotFound)
@@ -61,7 +61,7 @@ impl CalendarStore for HulyStore {
 
     async fn get_object(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
         object_id: &str,
     ) -> Result<CalendarObject, Error> {
@@ -70,7 +70,7 @@ impl CalendarStore for HulyStore {
 
     async fn put_object(
         &self,
-        principal: String,
+        principal: &User,
         cal_id: String,
         object: CalendarObject,
         overwrite: bool,
@@ -80,7 +80,7 @@ impl CalendarStore for HulyStore {
 
     async fn delete_object(
         &self,
-        principal: &str,
+        principal: &User,
         cal_id: &str,
         object_id: &str,
         use_trashbin: bool,

@@ -27,7 +27,7 @@ pub async fn route_post<C: CalendarStore, S: SubscriptionStore>(
         return Err(Error::Unauthorized);
     }
 
-    let calendar = store.get_calendar(&principal, &cal_id).await?;
+    let calendar = store.get_calendar(&user, &cal_id).await?;
     let calendar_resource = CalendarResource {
         cal: calendar,
         read_only: true,
