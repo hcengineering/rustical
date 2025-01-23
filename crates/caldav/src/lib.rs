@@ -40,7 +40,7 @@ pub fn configure_dav<
     addr_store: Arc<AS>,
     subscription_store: Arc<S>,
 ) {
-    let birthday_store = Arc::new(ContactBirthdayStore::new(addr_store));
+    //let birthday_store = Arc::new(ContactBirthdayStore::new(addr_store));
     cfg.service(
         web::scope("")
             .wrap(AuthenticationMiddleware::new(auth_provider))
@@ -65,14 +65,14 @@ pub fn configure_dav<
                 }),
             )
             .app_data(Data::from(store.clone()))
-            .app_data(Data::from(birthday_store.clone()))
+            //.app_data(Data::from(birthday_store.clone()))
             .app_data(Data::from(subscription_store))
             .service(RootResourceService::<PrincipalResource>::default().actix_resource())
             .service(
                 web::scope("/user").service(
                     web::scope("/{principal}")
                         .service(PrincipalResourceService(&[
-                            ("calendar", false), ("birthdays", true)
+                            ("calendar", false), //("birthdays", true)
                         ]).actix_resource().name(PrincipalResource::route_name()))
                         .service(web::scope("/calendar")
                             .service(CalendarSetResourceService::new(store.clone()).actix_resource())
@@ -85,6 +85,7 @@ pub fn configure_dav<
                                     ))
                             )
                         )
+                        /*
                         .service(web::scope("/birthdays")
                             .service(CalendarSetResourceService::new(birthday_store.clone()).actix_resource())
                             .service(
@@ -96,6 +97,7 @@ pub fn configure_dav<
                                     ))
                             )
                         )
+                        */
                 ),
             ).service(subscription_resource::<S>()),
     );
