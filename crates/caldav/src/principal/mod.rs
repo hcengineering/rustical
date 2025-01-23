@@ -145,6 +145,7 @@ impl<AP: AuthenticationProvider> ResourceService for PrincipalResourceService<AP
 
     async fn get_resource(
         &self,
+        _user: &User,
         (principal,): &Self::PathComponents,
     ) -> Result<Self::Resource, Self::Error> {
         let user = self
@@ -160,6 +161,7 @@ impl<AP: AuthenticationProvider> ResourceService for PrincipalResourceService<AP
 
     async fn get_members(
         &self,
+        _user: &User,
         (principal,): &Self::PathComponents,
     ) -> Result<Vec<(String, Self::MemberType)>, Self::Error> {
         Ok(self

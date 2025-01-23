@@ -131,6 +131,7 @@ impl<AS: AddressbookStore> ResourceService for AddressObjectResourceService<AS> 
 
     async fn get_resource(
         &self,
+        _user: &User,
         AddressObjectPathComponents {
             principal,
             addressbook_id,
@@ -149,6 +150,7 @@ impl<AS: AddressbookStore> ResourceService for AddressObjectResourceService<AS> 
 
     async fn delete_resource(
         &self,
+        _user: &User,
         AddressObjectPathComponents {
             principal,
             addressbook_id,

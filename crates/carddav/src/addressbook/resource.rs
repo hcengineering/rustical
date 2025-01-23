@@ -202,6 +202,7 @@ impl<AS: AddressbookStore, S: SubscriptionStore> ResourceService
 
     async fn get_resource(
         &self,
+        _user: &User,
         (principal, addressbook_id): &Self::PathComponents,
     ) -> Result<Self::Resource, Error> {
         let addressbook = self
@@ -214,6 +215,7 @@ impl<AS: AddressbookStore, S: SubscriptionStore> ResourceService
 
     async fn get_members(
         &self,
+        _user: &User,
         (principal, addressbook_id): &Self::PathComponents,
     ) -> Result<Vec<(String, Self::MemberType)>, Self::Error> {
         Ok(self
@@ -235,6 +237,7 @@ impl<AS: AddressbookStore, S: SubscriptionStore> ResourceService
 
     async fn save_resource(
         &self,
+        _user: &User,
         (principal, addressbook_id): &Self::PathComponents,
         file: Self::Resource,
     ) -> Result<(), Self::Error> {
@@ -246,6 +249,7 @@ impl<AS: AddressbookStore, S: SubscriptionStore> ResourceService
 
     async fn delete_resource(
         &self,
+        _user: &User,
         (principal, addressbook_id): &Self::PathComponents,
         use_trashbin: bool,
     ) -> Result<(), Self::Error> {
