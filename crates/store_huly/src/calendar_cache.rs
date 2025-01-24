@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, SystemTime};
 use rustical_store::auth::User;
-use rustical_store::calendar::CalendarObjectType;
+use rustical_store::calendar::{self, CalendarObjectType};
 use rustical_store::{Calendar, Error};
 use crate::api::{find_all, FindOptions, FindParams, HulyCalendar, HulyEvent, HulyEventData};
 use crate::auth::get_workspaces;
@@ -185,27 +185,33 @@ impl HulyCalendarCache {
 
 impl CachedCalendar {
     async fn new(api_url: &str, user: &User) -> Result<Self, Error> {
-        let query = FindParams {
-            class: "calendar:class:Calendar".to_string(),
-            query: HashMap::from([("name".to_string(), user.id.to_string())]),
-            options: Some(FindOptions{
-                projection: Some(HashMap::from([
-                    ("_id".to_string(), 1), 
-                    ("modifiedOn".to_string(), 1)
-                ])),
-            }),
+        let Some(account) = &user.account else {
+            return Err(Error::ApiError("No account".into()))
         };
-        let huly_calendars = find_all::<Vec<HulyCalendar>>(api_url, user.try_into()?, query).await?;
-        if huly_calendars.is_empty() {
-            println!("no huly calendars");
-            return Err(Error::NotFound)
-        }
-        let calendar = huly_calendars[0].clone();
+
+        let calendar_id = format!("{}_calendar", account);
+
+        // let query = FindParams {
+        //     class: "calendar:class:Calendar".to_string(),
+        //     query: HashMap::from([("_id".to_string(), calendar_id)]),
+        //     options: Some(FindOptions{
+        //         projection: Some(HashMap::from([
+        //             ("_id".to_string(), 1), 
+        //             ("modifiedOn".to_string(), 1)
+        //         ])),
+        //     }),
+        // };
+        // let huly_calendars = find_all::<Vec<HulyCalendar>>(api_url, user.try_into()?, query).await?;
+        // if huly_calendars.is_empty() {
+        //     println!("no huly calendars");
+        //     return Err(Error::NotFound)
+        // }
+        // let calendar = huly_calendars[0].clone();
         //println!("*** huly calendar {}\n", serde_json::to_string_pretty(&calendar).unwrap());
 
         let query = FindParams {
             class: "calendar:class:Event".to_string(),
-            query: HashMap::from([("calendar".to_string(), calendar.id.clone())]),
+            query: HashMap::from([("calendar".to_string(), calendar_id.clone())]),
             options: Some(FindOptions{
                 projection: Some(HashMap::from([
                     ("eventId".to_string(), 1),
@@ -224,7 +230,7 @@ impl CachedCalendar {
         Ok(Self {
             hash: hash as i64,
             fetched_at: SystemTime::now(),
-            calendar_id: calendar.id,
+            calendar_id,
             events,
         })
     }
