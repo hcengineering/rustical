@@ -22,13 +22,15 @@ impl HulyStore {
 }
 
 pub struct HulyAuthProvider {
+    api_url: String,
     accounts_url: String,
 }
 
 impl HulyAuthProvider {
-    pub fn new(accounts_url: &str) -> Self {
+    pub fn new(api_url: String, accounts_url: String) -> Self {
         Self {
-            accounts_url: accounts_url.into(),
+            api_url,
+            accounts_url,
         }
     }
 }

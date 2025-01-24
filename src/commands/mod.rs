@@ -34,6 +34,7 @@ pub fn cmd_gen_config(_args: GenConfigArgs) -> anyhow::Result<()> {
                     "generate a password hash with rustical pwhash --algorithm argon2".to_owned(),
                 ),
                 workspace: None,
+                account: None,
                 groups: vec![],
                 inherited_groups: vec![],
                 app_tokens: vec![
