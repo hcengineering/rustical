@@ -65,6 +65,12 @@ impl Default for DavPushConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct HulyConfig {
+    pub accounts_url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub data_store: DataStoreConfig,
     pub auth: AuthConfig,
@@ -75,4 +81,5 @@ pub struct Config {
     pub tracing: TracingConfig,
     #[serde(default)]
     pub dav_push: DavPushConfig,
+    pub huly: HulyConfig,
 }

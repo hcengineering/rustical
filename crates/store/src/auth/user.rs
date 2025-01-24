@@ -12,6 +12,7 @@ pub struct User {
     pub id: String,
     pub displayname: Option<String>,
     pub password: Option<String>,
+    pub workspace: Option<String>,
 }
 
 #[derive(Clone, Debug, Display)]

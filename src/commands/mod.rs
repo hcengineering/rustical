@@ -34,6 +34,7 @@ pub fn cmd_gen_config(_args: GenConfigArgs) -> anyhow::Result<()> {
                         "generate a password hash with rustical pwhash --algorithm argon2"
                             .to_owned(),
                     ),
+                    workspace: None,
                 },
                 app_tokens: vec![
                     "generate an app token hash with rustical pwhash --algorithm pbkdf2".to_owned(),
@@ -51,6 +52,9 @@ pub fn cmd_gen_config(_args: GenConfigArgs) -> anyhow::Result<()> {
         },
         */
         dav_push: DavPushConfig::default(),
+        huly: crate::config::HulyConfig {
+            accounts_url: "http://localhost:3000".to_string(),
+        }
     };
     let generated_config = toml::to_string(&config)?;
     println!("{generated_config}");
