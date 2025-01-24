@@ -15,6 +15,9 @@ pub enum Error {
     #[error("Read-only")]
     ReadOnly,
 
+    #[error("API error: {0}")]
+    ApiError(String),
+
     #[error(transparent)]
     ParserError(#[from] ical::parser::ParserError),
 

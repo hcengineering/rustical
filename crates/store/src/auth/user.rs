@@ -18,6 +18,7 @@ pub struct User {
     pub groups: Vec<String>,
     #[serde(skip)]
     pub inherited_groups: Vec<String>,
+    pub workspace: Option<String>,
 }
 
 #[derive(Clone, Debug, Display)]
