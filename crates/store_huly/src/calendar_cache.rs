@@ -34,17 +34,6 @@ pub struct HulyCalendarCache {
     invalidation_interval: Duration,
 }
 
-impl HulyCalendarCache {
-    pub fn new(api_url: String, accounts_url: String, invalidation_interval: Duration) -> Self {
-        Self {
-            api_url,
-            accounts_url,
-            calendars: HashMap::new(),
-            invalidation_interval,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct CachedCalendar {
     hash: i64,
@@ -54,6 +43,24 @@ struct CachedCalendar {
 }
 
 impl HulyCalendarCache {
+    pub fn new(api_url: String, accounts_url: String, invalidation_interval: Duration) -> Self {
+        Self {
+            api_url,
+            accounts_url,
+            calendars: HashMap::new(),
+            invalidation_interval,
+        }
+    }
+
+    pub(crate) fn api_url(&self) -> &str {
+        &self.api_url
+    }
+
+    pub(crate) fn invalidate(&mut self, user: &User) {
+        let key = CacheKey::new(user).unwrap();
+        self.calendars.remove(&key);
+    }
+
     async fn add_entry(&mut self, user: &User) -> Result<&CachedCalendar, Error> {
         let key = CacheKey::new(user)?;
         self.calendars.insert(key.clone(), CachedCalendar::new(&self.api_url, user).await?);
@@ -61,6 +68,12 @@ impl HulyCalendarCache {
     }
 
     fn get_entry(&self, user: &User) -> Result<Option<&CachedCalendar>, Error> {
+        // When updating, a client makes several calls in sequence
+        // And almost in every call it asks for get_calendar()
+        // This is not practical to send requests to Huly API at each client's call,
+        // because all of them address the same data. 
+        // So after the first call we cache the data for a short period of time
+        // to make subsequent calls faster
         let key = CacheKey::new(user)?;
         if let Some(cal) = self.calendars.get(&key) {
             if let Ok(elapsed) = cal.fetched_at.elapsed() {
@@ -165,7 +178,7 @@ impl HulyCalendarCache {
         }
         let mut event = events.remove(0);
         event.event_id = Some(event_id.to_string());
-        println!("*** huly event: {}", serde_json::to_string_pretty(&event).unwrap());
+        //println!("*** huly event: {}", serde_json::to_string_pretty(&event).unwrap());
         Ok(event)
     }
 }
