@@ -13,6 +13,7 @@ pub struct User {
     pub displayname: Option<String>,
     pub password: Option<String>,
     pub workspace: Option<String>,
+    pub account: Option<String>,
 }
 
 #[derive(Clone, Debug, Display)]

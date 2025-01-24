@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use rustical_store::{auth::{AuthenticationProvider, User}, Error};
+use crate::api::{get_account, ApiAuth};
+
 use super::HulyAuthProvider;
 
 #[derive(Debug, Deserialize)]
@@ -101,7 +103,7 @@ impl AuthenticationProvider for HulyAuthProvider {
         let user_id = p.next().unwrap();
         let workspace = p.next();
 
-        tracing::debug!("Huly login user={} ws={}", user_id, workspace.unwrap_or_default());
+        tracing::debug!("HULY_LOGIN user={} ws={:?}", user_id, workspace);
 
         let token = login(&self.accounts_url, user_id, password).await;
         if let Err(err) = &token {
@@ -110,24 +112,45 @@ impl AuthenticationProvider for HulyAuthProvider {
             // Returning None will cause it to responce with 401 Unauthorized
             return Ok(None);
         }
-        let mut token = token.unwrap();
+        let token = token.unwrap();
 
-        if let Some(workspace) = workspace {
-            let ws_token = select_workspace(&self.accounts_url, &token, workspace).await;
-            if let Err(err) = &ws_token {
-                tracing::error!("Error selecting workspace: {:?}", err);
-                // AuthenticationMiddleware can't handle errors, it crashes the request thread
-                // Returning None will cause it to responce with 401 Unauthorized
-                return Ok(None);
-            }
-            token = ws_token.unwrap();
+        let Some(workspace) = workspace else {
+            return Ok(Some(User {
+                id: user_id.to_string(),
+                displayname: Some(user_id.to_string()),
+                password: Some(token.clone()),
+                workspace: None,
+                account: None,
+            }));
+        };
+
+        let ws_token = select_workspace(&self.accounts_url, &token, workspace).await;
+        if let Err(err) = &ws_token {
+            tracing::error!("Error selecting workspace: {:?}", err);
+            // AuthenticationMiddleware can't handle errors, it crashes the request thread
+            // Returning None will cause it to responce with 401 Unauthorized
+            return Ok(None);
         }
+        let ws_token = ws_token.unwrap();
+        
+        let account = get_account(&self.api_url, ApiAuth { 
+            token: ws_token.clone(),
+            workspace: workspace.to_string(),
+        }).await;
+        if let Err(err) = &account {
+            tracing::error!("Error getting account: {:?}", err);
+            // AuthenticationMiddleware can't handle errors, it crashes the request thread
+            // Returning None will cause it to responce with 401 Unauthorized
+            return Ok(None);
+        }
+        let account = account.unwrap();
 
         Ok(Some(User {
             id: user_id.to_string(),
             displayname: Some(user_id.to_string()),
-            password: Some(token),
-            workspace: workspace.map(|w| w.to_string()),
+            password: Some(ws_token),
+            workspace: Some(workspace.to_string()),
+            account: Some(account.id),
         }))
     }
 }

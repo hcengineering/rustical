@@ -35,6 +35,7 @@ pub fn cmd_gen_config(_args: GenConfigArgs) -> anyhow::Result<()> {
                             .to_owned(),
                     ),
                     workspace: None,
+                    account: None,
                 },
                 app_tokens: vec![
                     "generate an app token hash with rustical pwhash --algorithm pbkdf2".to_owned(),

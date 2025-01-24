@@ -142,6 +142,13 @@ pub(crate) struct HulyEventTx<T> {
     pub(crate) attached_to_class: String
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HulyAccount {
+    #[serde(rename = "_id")]
+    pub(crate) id: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FindOptions {
@@ -160,7 +167,6 @@ pub(crate) struct FindParams {
 // TODO: this is a temporary value living not longer than a User from which it's produced
 // rewrite to use string refs with lifetime template args to avoid unnecessary cloning
 pub(crate) struct ApiAuth {
-    pub(crate) user: String,
     pub(crate) token: String,
     pub(crate) workspace: String,
 }
@@ -176,54 +182,69 @@ impl TryFrom<&User> for ApiAuth {
             return Err(Error::ApiError("no token".into()))
         };
         Ok(Self {
-            user: user.id.clone(),
             token: token.clone(),
             workspace: workspace.clone(),
         })
     }
 }
 
-async fn api_post<TResult, TParams>(url: &str, method: &str, auth: ApiAuth, p: TParams) -> Result<TResult, Error> 
+enum HttpMethod {
+    Get,
+    Post,
+}
+
+async fn api_call<TResult, TParams>(
+    url: &str, 
+    method: HttpMethod, 
+    func: &str, 
+    auth: ApiAuth, 
+    params: Option<TParams>
+) -> Result<TResult, Error> 
 where
     TResult: for<'a> serde::de::Deserialize<'a>,
     TParams: serde::Serialize,
 {
     let client = reqwest::Client::new();
-    let url = format!("{}/api/v1/{}/{}", url, method, auth.workspace);
-    let response = client
-        .post(url)
-        .header("Authorization", format!("Bearer {}", auth.token))
-        .json(&p)
+    let url = format!("{}/api/v1/{}/{}", url, func, auth.workspace);
+    let mut request = 
+        match method {
+            HttpMethod::Get => client.get(url),
+            HttpMethod::Post => client.post(url),
+        }
+        .header("Authorization", format!("Bearer {}", auth.token));
+    if let Some(params) = params {
+        request = request.json(&params);
+    }
+    let response = request
         .send()
         .await;
     if let Err(err) = response {
-        println!("*** API {}: http_error: {:?}", method, err);
-        return Err(Error::ApiError(format!("{} http_error: {:?}", method, err)));
+        //println!("*** API {}: http_error: {:?}", func, err);
+        return Err(Error::ApiError(format!("{} http_error: {:?}", func, err)));
     }
     let response = response.unwrap();
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await;
         if let Err(err) = text {
-            println!("*** API {}: resp_error: {:?}", method, err);
-            return Err(Error::ApiError(format!("{} resp_error {}: {:?}", method, status, err)));
+            //println!("*** API {}: resp_error: {:?}", func, err);
+            return Err(Error::ApiError(format!("{} resp_error {}: {:?}", func, status, err)));
         }
         let text = text.unwrap();
-        // println!("*** response_text: {:?}", text);
-        println!("*** API {}: status_error: {:?}", method, text);
-        return Err(Error::ApiError(format!("{} status_error {}: {:?}", method, status,text)));
+        //println!("*** API {}: status_error: {:?}", func, text);
+        return Err(Error::ApiError(format!("{} status_error {}: {:?}", func, status,text)));
     }
     let text = response.text().await;
     if let Err(err) = text {
-        println!("*** API {}: resp_error: {:?}", method, err);
-        return Err(Error::ApiError(format!("{} resp_error: {:?}", method, err)));
+        //println!("*** API {}: resp_error: {:?}", func, err);
+        return Err(Error::ApiError(format!("{} resp_error: {:?}", func, err)));
     }
     let text = text.unwrap();
     // println!("*** response_text: {:?}", text);
     let result = serde_json::from_str::<TResult>(&text);
     if let Err(err) = result {
-        println!("*** API {}: json_error: {:?}", method, err);
-        return Err(Error::ApiError(format!("{} json_error: {:?}", method, err)));
+        //println!("*** API {}: json_error: {:?}", func, err);
+        return Err(Error::ApiError(format!("{} json_error: {:?}", func, err)));
     }
     Ok(result.unwrap())
 }
@@ -231,7 +252,7 @@ where
 pub(crate) async fn find_all<T>(url: &str, auth: ApiAuth, params: FindParams) -> Result<T, Error> 
 where T: for<'a> serde::de::Deserialize<'a>,
 {
-    api_post(url, "find-all", auth, params).await
+    api_call(url, HttpMethod::Post, "find-all", auth, Some(params)).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,7 +263,7 @@ pub(crate) async fn tx<Tx>(url: &str, auth: ApiAuth, tx: Tx) -> Result<(), Error
 where
     Tx: serde::Serialize,
 {
-    _ = api_post::<TxResult, Tx>(url, "tx", auth, tx).await?;
+    _ = api_call::<TxResult, Tx>(url, HttpMethod::Post, "tx", auth, Some(tx)).await?;
     Ok(())
 }
 
@@ -260,6 +281,13 @@ struct GenerateId {
 }
 
 pub(crate) async fn generate_id(url: &str, auth: ApiAuth, class: &str) -> Result<String, Error> {
-    let id: GeneratedId = api_post(url, "generate-id", auth, GenerateId { class: class.to_string() }).await?;
+    let p = Some(GenerateId { class: class.to_string() });
+    let id: GeneratedId = api_call(url, HttpMethod::Post, "generate-id", auth, p).await?;
     Ok(id.id)
+}
+
+pub(crate) async fn get_account(url: &str, auth: ApiAuth) -> Result<HulyAccount, Error> {
+    let p: Option<FindParams> = None;
+    let account: HulyAccount = api_call(url, HttpMethod::Get, "account", auth, p).await?;
+    Ok(account)
 }

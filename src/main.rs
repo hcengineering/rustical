@@ -105,7 +105,10 @@ async fn main() -> Result<()> {
             //     config::AuthConfig::Static(config) => StaticUserStore::new(config),
             // });
 
-            let user_store = Arc::new(rustical_store_huly::HulyAuthProvider::new(&config.huly.accounts_url));
+            let user_store = Arc::new(rustical_store_huly::HulyAuthProvider::new(
+                config.huly.api_url.clone(),
+                config.huly.accounts_url.clone()
+            ));
 
             HttpServer::new(move || {
                 make_app(
