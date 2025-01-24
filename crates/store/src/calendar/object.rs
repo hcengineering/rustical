@@ -47,9 +47,10 @@ pub enum CalendarObjectComponent {
 
 #[derive(Debug, Clone)]
 pub struct CalendarObject {
-    id: String,
-    ics: String,
-    data: CalendarObjectComponent,
+    pub id: String,
+    pub ics: String,
+    pub etag: Option<String>,
+    pub data: CalendarObjectComponent,
 }
 
 impl CalendarObject {
@@ -89,6 +90,7 @@ impl CalendarObject {
             return Ok(CalendarObject {
                 id: object_id,
                 ics,
+                etag: None,
                 data: CalendarObjectComponent::Event(EventObject {
                     event: event.clone(),
                     timezones,
@@ -99,6 +101,7 @@ impl CalendarObject {
             return Ok(CalendarObject {
                 id: object_id,
                 ics,
+                etag: None,
                 data: CalendarObjectComponent::Todo(TodoObject { todo: todo.clone() }),
             });
         }
@@ -106,6 +109,7 @@ impl CalendarObject {
             return Ok(CalendarObject {
                 id: object_id,
                 ics,
+                etag: None,
                 data: CalendarObjectComponent::Journal(JournalObject {
                     journal: journal.clone(),
                 }),

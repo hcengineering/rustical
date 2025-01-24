@@ -5,15 +5,22 @@ use super::HulyAuthProvider;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AccountsResponce {
-    result: Option<AccountResult>,
+struct AccountsResponce<TResult>
+{
+    result: Option<TResult>,
     error: Option<AccountError>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AccountResult {
+struct AccountLoginResult {
     token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountWorkspaceResult {
+    workspace: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,7 +36,10 @@ struct AccountRequest {
     params: Vec<String>,
 }
 
-async fn account_post(url: &str, req: &AccountRequest, token: Option<&str>) -> Result<AccountResult, Error> {
+async fn account_post<TResult>(url: &str, req: &AccountRequest, token: Option<&str>) -> Result<TResult, Error>
+where
+    TResult: for<'de> Deserialize<'de>
+{
     let client = reqwest::Client::new();
     let mut response = client.post(url)
         .json(req);
@@ -43,7 +53,7 @@ async fn account_post(url: &str, req: &AccountRequest, token: Option<&str>) -> R
         return Err(Error::ApiError(format!("{:?}", err)));
     }
     let response = response.unwrap();
-    let body = response.json::<AccountsResponce>().await;
+    let body = response.json::<AccountsResponce<TResult>>().await;
     if let Err(err) = body {
         return Err(Error::ApiError(format!("{:?}", err)));
     }
@@ -62,7 +72,7 @@ async fn login(url: &str, user: &str, password: &str) -> Result<String, Error> {
         method: "login".to_string(),
         params: vec![user.to_string(), password.to_string()],
     };
-    let res = account_post(url, &req, None).await?;
+    let res = account_post::<AccountLoginResult>(url, &req, None).await?;
     Ok(res.token)
 }
 
@@ -71,8 +81,17 @@ async fn select_workspace(url: &str, token: &str, workspace: &str) -> Result<Str
         method: "selectWorkspace".to_string(),
         params: vec![workspace.to_string(), "external".to_string()],
     };
-    let res = account_post(url, &req, Some(token)).await?;
+    let res = account_post::<AccountLoginResult>(url, &req, Some(token)).await?;
     Ok(res.token)
+}
+
+pub(crate) async fn get_workspaces(url: &str, token: &str) -> Result<Vec<String>, Error> {
+    let req = AccountRequest {
+        method: "getUserWorkspaces".to_string(),
+        params: vec![],
+    };
+    let res = account_post::<Vec<AccountWorkspaceResult>>(url, &req, Some(token)).await?;
+    Ok(res.into_iter().map(|w| w.workspace).collect())
 }
 
 #[async_trait]
