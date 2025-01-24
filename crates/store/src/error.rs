@@ -20,6 +20,9 @@ pub enum Error {
     #[error(transparent)]
     IO(#[from] std::io::Error),
 
+    #[error("API error: {0}")]
+    ApiError(String),
+
     #[error(transparent)]
     ParserError(#[from] ical::parser::ParserError),
 
