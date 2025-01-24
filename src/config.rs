@@ -66,7 +66,14 @@ impl Default for DavPushConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HulyConfig {
+    pub api_url: String,
     pub accounts_url: String,
+    /// When updating, a client makes several calls in sequence
+    /// This is not practical to send requests to Huly API at each client's call,
+    /// because all of them address the same data. 
+    /// So after the first call we cache the data for a short period of time
+    /// to make subsequent calls faster
+    pub cache_invalidation_interval_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

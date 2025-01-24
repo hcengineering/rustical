@@ -40,6 +40,7 @@ enum Command {
     Pwhash(commands::PwhashArgs),
 }
 
+/*
 async fn get_data_stores(
     migrate: bool,
     config: &DataStoreConfig,
@@ -49,10 +50,6 @@ async fn get_data_stores(
     Arc<impl SubscriptionStore>,
     Receiver<CollectionOperation>,
 )> {
-    let (_, recv) = tokio::sync::mpsc::channel(1000);
-    let store = Arc::new(rustical_store_huly::HulyStore::new());
-    Ok((store.clone(), store.clone(), store.clone(), recv))
-/*
     Ok(match &config {
         DataStoreConfig::Sqlite(SqliteDataStoreConfig { db_url }) => {
             let db = create_db_pool(db_url, migrate).await?;
@@ -65,8 +62,8 @@ async fn get_data_stores(
             (addressbook_store, cal_store, subscription_store, recv)
         }
     })
-*/
 }
+*/
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -84,8 +81,17 @@ async fn main() -> Result<()> {
 
             setup_tracing(&config.tracing);
 
-            let (addr_store, cal_store, subscription_store, update_recv) =
-                get_data_stores(!args.no_migrations, &config.data_store).await?;
+            // let (addr_store, cal_store, subscription_store, update_recv) =
+            //     get_data_stores(!args.no_migrations, &config.data_store).await?;
+
+            let calendar_cache = rustical_store_huly::HulyCalendarCache::new(
+                config.huly.api_url.clone(),
+                config.huly.accounts_url.clone(),
+                std::time::Duration::from_secs(config.huly.cache_invalidation_interval_secs));
+            let (_, recv) = tokio::sync::mpsc::channel(1000);
+            let store = Arc::new(rustical_store_huly::HulyStore::new(tokio::sync::Mutex::new(calendar_cache)));
+            let (addr_store, cal_store, subscription_store, update_recv) = (store.clone(), store.clone(), store.clone(), recv);
+            
 
             if config.dav_push.enabled {
                 tokio::spawn(push_notifier(

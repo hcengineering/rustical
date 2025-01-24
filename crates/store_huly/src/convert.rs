@@ -1,0 +1,281 @@
+use std::collections::HashMap;
+use chrono::TimeZone;
+use rustical_store::{CalendarObject, Error};
+use ical::{generator::Emitter, parser::Component, property::Property};
+use rustical_store::calendar::{CalendarObjectComponent, EventObject};
+use sha2::{Digest, Sha256};
+use std::str::FromStr;
+use crate::api::{HulyEventData, RecurringRule, Timestamp};
+
+pub(crate) fn calc_etag(id: &String, modified_on: Timestamp) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(id);
+    hasher.update(modified_on.to_string());
+    format!("{:x}", hasher.finalize())
+}
+
+fn timestamp_to_utc(msec: Timestamp, name_hint: &str) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+    let secs = msec / 1000;
+    let nsecs = ((msec - secs * 1000) * 1000) as u32;
+    let dt = chrono::Utc.timestamp_opt(secs, nsecs);
+    let chrono::offset::LocalResult::Single(utc) = dt else {
+        return Err(Error::InvalidData(format!("Invalid timestamp: {}", name_hint)))
+    };
+    Ok(utc)
+}
+
+fn format_utc_msec(msec: Timestamp, tz: &chrono_tz::Tz, all_day: bool, name_hint: &str) -> Result<String, Error> {
+    let utc = timestamp_to_utc(msec, name_hint)?;
+    if all_day {
+        return Ok(utc.format("%Y%m%d").to_string());
+    }
+    let tz_aware = utc.with_timezone(tz);
+    Ok(tz_aware.format(ical::generator::ICAL_DATE_FORMAT).to_string())
+}
+
+pub(crate) fn parse_to_utc_msec(time_str: &str, tz: &chrono_tz::Tz, name_hint: &str) -> Result<i64, Error> {
+    let local = chrono::NaiveDateTime::parse_from_str(time_str, ical::generator::ICAL_DATE_FORMAT);
+    if let Err(err) = local {
+        return Err(Error::InvalidData(format!("Invalid timestamp: {}: {}", name_hint, err)))
+    }
+    let local = local.unwrap();
+    let Some(tz_aware) = tz.from_local_datetime(&local).earliest() else {
+        return Err(Error::InvalidData(format!("Invalid timestamp: {}", name_hint)))
+    };
+    Ok(tz_aware.timestamp_millis())
+}
+
+impl TryInto<CalendarObject> for HulyEventData {
+    type Error = Error;
+
+    fn try_into(self) -> Result<CalendarObject, Self::Error> {
+        let time_zone = self.time_zone.as_ref()
+            .ok_or(Error::InvalidData("No event time zone".into()))?;
+        let tz = chrono_tz::Tz::from_str(time_zone)
+            .map_err(|err| Error::InvalidData(format!("Invalid event timezone: {}", err)))?;
+
+        let created = format_utc_msec(self.created_on, &tz, false, "created")?;
+        let changed = format_utc_msec(self.modified_on, &tz, false, "modified")?;
+        let start = format_utc_msec(self.date, &tz, self.all_day, "start date")?;
+        let mut due_date = self.due_date;
+        if self.all_day {
+            // Huly defines all-day event as date={start_day}{00:00:00} due_date={end_day}{23:59:59:999}
+            // While CaldDav clients expect DTEND={end_day+1}{no time part}
+            // Shifting due_date by 1 ms, we switch to the next day
+            due_date += 1;
+        }
+        let end = format_utc_msec(due_date, &tz, self.all_day, "due date")?;
+
+        let ical_event = ical::generator::IcalEventBuilder::tzid(time_zone)
+            .uid(self.event_id.clone().unwrap())
+            .changed(changed.clone());
+        let ical_event = if self.all_day {
+            ical_event
+                .start_day(start)
+                .end_day(end)
+        } else {
+            ical_event
+                .start(start)
+                .end(end)
+        };
+        let mut ical_event = ical_event
+            .set(ical::ical_property!("SUMMARY", &self.title))
+            .set(ical::ical_property!("DESCRIPTION", &self.description))
+            .set(ical::ical_property!("CREATED", &created))
+            .set(ical::ical_property!("LAST_MODIFIED", &changed));
+        if let Some(location) = &self.location {
+            ical_event = ical_event.set(ical::ical_property!("LOCATION", location));
+        }
+        if let Some(rules) = &self.rules {
+            let mut rrules: Vec<String> = vec![];
+            for rule in rules {
+                let rrule = rule.to_rrule_string()?;
+                rrules.push(rrule);
+            }
+            ical_event = ical_event.repeat_rule(rrules.join(";"));
+        }
+        if let Some(exdate) = &self.exdate {
+            for dt in exdate {
+                let dt_str = format_utc_msec(*dt, &tz, true, "exdate")?;
+                ical_event = ical_event.set(ical::ical_property!("EXDATE", dt_str, ical::ical_param!("VALUE", "DATE")));
+            }
+        }
+        let ical_event = ical_event
+            .build();
+
+        let mut ical_tz = ical::parser::ical::component::IcalTimeZone::new();
+            ical_tz.add_property(ical::ical_property!("TZID", tz.name()));
+            ical_tz.add_property(ical::ical_property!("X-LIC-LOCATION", tz.name()));
+        // TODO: The "VTIMEZONE" calendar component MUST include
+        // at least one definition of a "STANDARD" or "DAYLIGHT" sub-component
+        // https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5
+    
+        let ical_obj = ical::generator::IcalCalendarBuilder::version("2.0")
+            .gregorian()
+            .prodid("-//Huly Labs//NONSGML Huly Calendar//EN")
+            .add_event(ical_event.clone())
+            .add_tz(ical_tz.clone())
+            .build();
+
+        let etag = calc_etag(self.event_id.as_ref().unwrap(), self.modified_on);
+
+        let obj = CalendarObject {
+            id: self.event_id.clone().unwrap(),
+            ics: ical_obj.generate(),
+            etag: Some(etag),
+            data: CalendarObjectComponent::Event(EventObject {
+                event: ical_event,
+                timezones: HashMap::from([(tz.name().to_string(), ical_tz)]),
+            })
+        };
+
+        Ok(obj)
+    }
+}
+
+pub(crate) fn parse_rrule_string(rrules: &str) -> Result<Vec<RecurringRule>, Error> {
+    let rules = rrules.split('\n')
+        .filter(|s| !s.is_empty())
+        .map(RecurringRule::from_rrule_string)
+        .collect();
+    if let Err(err) = rules {
+        return Err(Error::InvalidData(format!("Invalid RRULE: {}", err)));
+    }
+    Ok(rules.unwrap())
+}
+
+impl RecurringRule {
+    fn to_rrule_string(&self) -> Result<String, Error> {
+        let mut parts = vec![format!("FREQ={}", self.freq.to_uppercase())];
+        if let Some(end_date) = &self.end_date {
+            let end_date = timestamp_to_utc(*end_date, "rrule.enddate")?;
+            let end_date = end_date.format("%Y%m%dT%H%M%SZ").to_string();
+            parts.push(format!("UNTIL={}", end_date));
+        }
+        if let Some(count) = self.count {
+            parts.push(format!("COUNT={}", count));
+        }
+        if let Some(interval) = self.interval {
+            parts.push(format!("INTERVAL={}", interval));
+        }
+        if let Some(by_second) = &self.by_second {
+            parts.push(format!("BYSECOND={}", by_second.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_minute) = &self.by_minute {
+            parts.push(format!("BYMINUTE={}", by_minute.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_hour) = &self.by_hour {
+            parts.push(format!("BYHOUR={}", by_hour.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_day) = &self.by_day {
+            parts.push(format!("BYDAY={}", by_day.join(",")));
+        }
+        if let Some(by_month_day) = &self.by_month_day {
+            parts.push(format!("BYMONTHDAY={}", by_month_day.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_year_day) = &self.by_year_day {
+            parts.push(format!("BYYEARDAY={}", by_year_day.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_week_no) = &self.by_week_no {
+            parts.push(format!("BYWEEKNO={}", by_week_no.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_month) = &self.by_month {
+            parts.push(format!("BYMONTH={}", by_month.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_set_pos) = &self.by_set_pos {
+            parts.push(format!("BYSETPOS={}", by_set_pos.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(wkst) = &self.wkst {
+            parts.push(format!("WKST={}", wkst.join(",")));
+        }
+        Ok(parts.join(";"))
+    }
+
+    pub(crate) fn from_rrule_string(rrule: &str) -> Result<Self, String> {
+        let mut rule = RecurringRule::default();
+        for part in rrule.split(';') {
+            let mut kv = part.split('=');
+            let key = kv.next().ok_or("Invalid format")?;
+            let value = kv.next().ok_or("Invalid format")?;
+            match key.to_uppercase().as_str() {
+                "FREQ" => rule.freq = value.to_string(),
+                "UNTIL" => {
+                    let dt = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%SZ");
+                    if let Err(err) = dt {
+                        return Err(format!("Invalid date UNTIL: {}", err))
+                    }
+                    rule.end_date = Some(dt.unwrap().and_utc().timestamp_millis())
+                }
+                "COUNT" => {
+                    rule.count = Some(value.parse().map_err(|e| format!("Invalid COUNT: {}", e))?);
+                }
+                "INTERVAL" => {
+                    rule.interval = Some(value.parse().map_err(|e| format!("Invalid INTERVAL: {}", e))?);
+                }
+                "BYSECOND" => {
+                    rule.by_second = Some(value.split(',')
+                        .map(|s| s.parse::<u8>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYSECOND: {}", e))?);
+                }
+                "BYMINUTE" => {
+                    rule.by_minute = Some(value.split(',')
+                        .map(|s| s.parse::<u8>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYMINUTE: {}", e))?);
+                }
+                "BYHOUR" => {
+                    rule.by_hour = Some(value.split(',')
+                        .map(|s| s.parse::<u8>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYHOUR: {}", e))?);
+                }
+                "BYDAY" => {
+                    rule.by_day = Some(value.split(',')
+                        .map(|s| s.to_string())
+                        .collect());
+                }
+                "BYMONTHDAY" => {
+                    rule.by_month_day = Some(value.split(',')
+                        .map(|s| s.parse::<u8>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYMONTHDAY: {}", e))?);
+                }
+                "BYYEARDAY" => {
+                    rule.by_year_day = Some(value.split(',')
+                        .map(|s| s.parse::<u16>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYYEARDAY: {}", e))?);
+                }
+                "BYWEEKNO" => {
+                    rule.by_week_no = Some(value.split(',')
+                        .map(|s| s.parse::<i8>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYWEEKNO: {}", e))?);
+                }
+                "BYMONTH" => {
+                    rule.by_month = Some(value.split(',')
+                        .map(|s| s.parse::<u8>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYMONTH: {}", e))?);
+                }
+                "BYSETPOS" => {
+                    rule.by_set_pos = Some(value.split(',')
+                        .map(|s| s.parse::<i16>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| format!("Invalid BYSETPOS: {}", e))?);
+                }
+                "WKST" => {
+                    rule.wkst = Some(value.split(',')
+                        .map(|s| s.to_string())
+                        .collect());
+                }
+                _ => return Err(format!("Unknown part: {}", key))
+            }
+        }
+        if rule.freq.is_empty() {
+            return Err("FREQ is required".to_string());
+        }
+        Ok(rule)
+    }
+}
