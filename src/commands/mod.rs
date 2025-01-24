@@ -41,7 +41,9 @@ pub fn cmd_gen_config(_args: GenConfigArgs) -> anyhow::Result<()> {
         dav_push: DavPushConfig::default(),
         nextcloud_login: Default::default(),
         huly: crate::config::HulyConfig {
+            api_url: "http://localhost:4040".to_string(),
             accounts_url: "http://localhost:3000".to_string(),
+            cache_invalidation_interval_secs: 5,
         }
     };
     let generated_config = toml::to_string(&config)?;
