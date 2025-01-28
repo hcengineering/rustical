@@ -6,6 +6,7 @@ use app::make_app;
 use clap::{Parser, Subcommand};
 use commands::{cmd_gen_config, cmd_pwhash};
 use config::{DataStoreConfig, SqliteDataStoreConfig};
+use pbkdf2::hmac::digest::block_buffer::Error;
 use rustical_dav::push::push_notifier;
 use rustical_store::auth::StaticUserStore;
 use rustical_store::{AddressbookStore, CalendarStore, CollectionOperation, SubscriptionStore};
@@ -65,6 +66,33 @@ async fn get_data_stores(
 }
 */
 
+fn load_confing_from_env() -> Config {
+    Config {
+        data_store: config::DataStoreConfig::Sqlite(config::SqliteDataStoreConfig {
+            db_url: "".into(),
+        }),
+        auth: config::AuthConfig::Static(rustical_store::auth::StaticUserStoreConfig {
+            users: vec![],
+        }),
+        http: config::HttpConfig {
+            port: std::env::var("PORT").unwrap_or("9070".to_string()).parse().unwrap(),
+            host: std::env::var("HOST").unwrap_or( "0.0.0.0".to_string()),
+        },
+        tracing: config::TracingConfig {
+            opentelemetry: false,
+        },
+        dav_push: config::DavPushConfig {
+            enabled: false,
+            allowed_push_servers: None
+        },
+        huly: config::HulyConfig {
+            api_url: std::env::var("API_URL").unwrap_or_else(|_| panic!("API_URL is not set")),
+            accounts_url: std::env::var("ACCOUNTS_URL").unwrap_or_else(|_| panic!("ACCOUNTS_URL is not set")),
+            cache_invalidation_interval_secs: 5,
+        },
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -73,11 +101,14 @@ async fn main() -> Result<()> {
         Some(Command::GenConfig(gen_config_args)) => cmd_gen_config(gen_config_args)?,
         Some(Command::Pwhash(pwhash_args)) => cmd_pwhash(pwhash_args)?,
         None => {
-            let config: Config = toml::from_str(
-                &fs::read_to_string(&args.config_file).unwrap_or_else(|err| {
-                    panic!("Could not open file at {}: {}", &args.config_file, err)
-                }),
-            )?;
+            // let config: Config = toml::from_str(
+            //     &fs::read_to_string(&args.config_file).unwrap_or_else(|err| {
+            //         panic!("Could not open file at {}: {}", &args.config_file, err)
+            //     }),
+            // )?;
+
+            let config = load_confing_from_env();
+            print!("{}", serde_json::to_string_pretty(&config).unwrap());
 
             setup_tracing(&config.tracing);
 

@@ -2750,6 +2750,7 @@ dependencies = [
  "rustical_store_huly",
  "rustical_store_sqlite",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
  "toml",
