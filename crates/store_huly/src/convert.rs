@@ -1,7 +1,19 @@
 use std::collections::HashMap;
-use chrono::TimeZone;
+use chrono::{Datelike, DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
+use chrono_tz::OffsetComponents;
 use rustical_store::{CalendarObject, Error};
-use ical::{generator::Emitter, parser::Component, property::Property};
+use ical::{
+    generator::Emitter,
+    parser::{
+        ical::component::{
+            IcalTimeZone,
+            IcalTimeZoneTransition,
+            IcalTimeZoneTransitionType
+        },
+        Component
+    },
+    property::Property
+};
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
@@ -14,10 +26,10 @@ pub(crate) fn calc_etag(id: &String, modified_on: Timestamp) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn timestamp_to_utc(msec: Timestamp, name_hint: &str) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+fn timestamp_to_utc(msec: Timestamp, name_hint: &str) -> Result<DateTime<Utc>, Error> {
     let secs = msec / 1000;
     let nsecs = ((msec - secs * 1000) * 1000) as u32;
-    let dt = chrono::Utc.timestamp_opt(secs, nsecs);
+    let dt = Utc.timestamp_opt(secs, nsecs);
     let chrono::offset::LocalResult::Single(utc) = dt else {
         return Err(Error::InvalidData(format!("Invalid timestamp: {}", name_hint)))
     };
@@ -43,6 +55,70 @@ pub(crate) fn parse_to_utc_msec(time_str: &str, tz: &chrono_tz::Tz, name_hint: &
         return Err(Error::InvalidData(format!("Invalid timestamp: {}", name_hint)))
     };
     Ok(tz_aware.timestamp_millis())
+}
+
+struct TimezoneTransition {
+    utc: NaiveDateTime,
+    offset: Duration,
+    is_dst: bool,
+}
+
+fn get_timezone_transitions(tz: &chrono_tz::Tz, year: i32) -> Vec<TimezoneTransition> {
+    let start = Utc.with_ymd_and_hms(year, 1, 1, 0, 0, 0).unwrap();
+    let end = Utc.with_ymd_and_hms(year + 1, 1, 1, 0, 0, 0).unwrap();
+    let mut transitions = Vec::new();
+    let mut curr = start;
+    let mut prev_offset_secs = None;
+    while curr < end {
+        let utc = curr.naive_utc();
+        let offset = tz.offset_from_utc_datetime(&utc);
+        let offset_secs = i64::from(offset.fix().local_minus_utc());
+        if let Some(prev_offset) = prev_offset_secs {
+            if offset_secs != prev_offset {
+                transitions.push(TimezoneTransition{
+                    utc,
+                    offset: Duration::seconds(offset_secs),
+                    is_dst: !offset.dst_offset().is_zero(),
+                });
+                prev_offset_secs = Some(offset_secs);
+            }
+        } else {
+            prev_offset_secs = Some(offset_secs);
+        }
+        curr += Duration::hours(1);
+    }
+    transitions
+}
+
+fn add_timezone_transitions(ical_tz: &mut IcalTimeZone, transitions: &[TimezoneTransition]) {
+    let mut prev = &transitions[0];
+    for curr in transitions {
+        let mut transition = IcalTimeZoneTransition {
+            transition: if curr.is_dst {
+                IcalTimeZoneTransitionType::DAYLIGHT
+            } else {
+                IcalTimeZoneTransitionType::STANDARD
+            },
+            properties: Vec::new(),
+        };
+        transition.properties.push(Property {
+            name: "DTSTART".to_string(),
+            params: None,
+            value: Some(curr.utc.format("%Y%m%dT%H%M%SZ").to_string()),
+        });
+        transition.properties.push(Property {
+            name: "TZOFFSETFROM".to_string(),
+            params: None,
+            value: Some(format!("{:+05}", prev.offset.num_seconds() / 3600)),
+        });
+        transition.properties.push(Property {
+            name: "TZOFFSETTO".to_string(),
+            params: None,
+            value: Some(format!("{:+05}", curr.offset.num_seconds() / 3600)),
+        });
+        ical_tz.transitions.push(transition);
+        prev = curr;
+    }
 }
 
 impl TryInto<CalendarObject> for HulyEventData {
@@ -106,10 +182,24 @@ impl TryInto<CalendarObject> for HulyEventData {
         let mut ical_tz = ical::parser::ical::component::IcalTimeZone::new();
             ical_tz.add_property(ical::ical_property!("TZID", tz.name()));
             ical_tz.add_property(ical::ical_property!("X-LIC-LOCATION", tz.name()));
+
         // TODO: The "VTIMEZONE" calendar component MUST include
         // at least one definition of a "STANDARD" or "DAYLIGHT" sub-component
         // https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5
-    
+        // This is not a proper solution, because it returns transitions only if it detects a DST change in year
+        // But the standard says that there must be at least one transition per year
+        /*
+        let start_dt = timestamp_to_utc(self.date, "start date")?;
+        let end_dt = timestamp_to_utc(self.due_date, "due date")?;
+        let start_year = start_dt.year();
+        let end_year = end_dt.year();
+        for year in start_year..=end_year {
+            let transitions = get_timezone_transitions(&tz, year);
+            if !transitions.is_empty() {
+                add_timezone_transitions(&mut ical_tz, &transitions);
+            }
+        }
+        */
         let ical_obj = ical::generator::IcalCalendarBuilder::version("2.0")
             .gregorian()
             .prodid("-//Huly Labs//NONSGML Huly Calendar//EN")

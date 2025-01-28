@@ -86,6 +86,7 @@ impl CalendarStore for HulyStore {
         let mut cache = self.calendar_cache.lock().await;
         let event = cache.get_event(user, event_id).await?;
         let cal_obj: CalendarObject = event.try_into()?;
+        println!("*** RETURN {}", cal_obj.get_ics());
         Ok(cal_obj)
     }
 
