@@ -164,3 +164,4 @@ reqwest.workspace = true
 rustical_dav.workspace = true
 rustical_nextcloud_login.workspace = true
 quick-xml.workspace = true
+serde_json.workspace = true
