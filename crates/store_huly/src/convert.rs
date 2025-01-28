@@ -1,11 +1,15 @@
+use rustical_store::Error;
+use chrono::{DateTime, Duration, TimeZone, Utc, Offset, Datelike};
+use chrono_tz::Tz;
+use ical::{
+    generator::{IcalCalendar, IcalEvent, Emitter},
+    parser::ical::component::{IcalTimeZone, IcalTimeZoneTransition, IcalTimeZoneTransitionType},
+    property::Property,
+};
+use rustical_store::calendar::{CalendarObject, CalendarObjectComponent, EventObject};
 use std::collections::HashMap;
-use chrono::TimeZone;
-use rustical_store::{CalendarObject, Error};
-use ical::{generator::Emitter, parser::Component, property::Property};
-use rustical_store::calendar::{CalendarObjectComponent, EventObject};
-use sha2::{Digest, Sha256};
-use std::str::FromStr;
 use crate::api::{HulyEventData, RecurringRule, Timestamp};
+use sha2::{Sha256, Digest};
 
 pub(crate) fn calc_etag(id: &String, modified_on: Timestamp) -> String {
     let mut hasher = Sha256::new();
@@ -45,91 +49,185 @@ pub(crate) fn parse_to_utc_msec(time_str: &str, tz: &chrono_tz::Tz, name_hint: &
     Ok(tz_aware.timestamp_millis())
 }
 
+fn get_timezone_transitions(tz: &Tz, year: i32) -> Vec<(DateTime<Utc>, Duration)> {
+    let start = tz.with_ymd_and_hms(year, 1, 1, 0, 0, 0).unwrap();
+    let end = tz.with_ymd_and_hms(year + 1, 1, 1, 0, 0, 0).unwrap();
+
+    let mut transitions = Vec::new();
+    let mut current = start;
+
+    while current < end {
+        let next_local = current + Duration::hours(1);
+        if next_local >= end { break; }
+
+        let next_offset = tz.offset_from_utc_datetime(&next_local.naive_utc());
+        let utc = next_local.naive_utc();
+
+        transitions.push((
+            Utc.from_utc_datetime(&utc),
+            Duration::seconds(i64::from(next_offset.fix().local_minus_utc()))
+        ));
+
+        current = next_local;
+    }
+
+    transitions
+}
+
+fn add_timezone_transitions(ical_tz: &mut IcalTimeZone, _tz: &Tz, transitions: &[(DateTime<Utc>, Duration)]) {
+    if transitions.is_empty() {
+        return;
+    }
+
+    let mut prev_offset = transitions[0].1;
+
+    for (dt, offset) in transitions {
+        let is_dst = offset.num_seconds() > prev_offset.num_seconds();
+        let offset_secs = offset.num_seconds() as i32;
+
+        // Create transition component with correct type
+        let mut transition = IcalTimeZoneTransition {
+            transition: if is_dst {
+                IcalTimeZoneTransitionType::DAYLIGHT
+            } else {
+                IcalTimeZoneTransitionType::STANDARD
+            },
+            properties: Vec::new(),
+        };
+
+        // Add transition time property
+        transition.properties.push(Property {
+            name: "DTSTART".to_string(),
+            params: None,
+            value: Some(dt.format("%Y%m%dT%H%M%SZ").to_string()),
+        });
+
+        // Add offset property
+        transition.properties.push(Property {
+            name: "TZOFFSETFROM".to_string(),
+            params: None,
+            value: Some(format!("{:+05}", prev_offset.num_seconds() / 3600)),
+        });
+
+        transition.properties.push(Property {
+            name: "TZOFFSETTO".to_string(),
+            params: None,
+            value: Some(format!("{:+05}", offset_secs / 3600)),
+        });
+
+        ical_tz.transitions.push(transition);
+        prev_offset = *offset;
+    }
+}
+
 impl TryInto<CalendarObject> for HulyEventData {
     type Error = Error;
 
     fn try_into(self) -> Result<CalendarObject, Self::Error> {
-        let time_zone = self.time_zone.as_ref()
-            .ok_or(Error::InvalidData("No event time zone".into()))?;
-        let tz = chrono_tz::Tz::from_str(time_zone)
-            .map_err(|err| Error::InvalidData(format!("Invalid event timezone: {}", err)))?;
+        let time_zone = self.time_zone.unwrap_or_else(|| "UTC".to_string());
+        let tz: Tz = time_zone.parse().map_err(|_| Error::InvalidData("Invalid timezone".to_string()))?;
 
-        let created = format_utc_msec(self.created_on, &tz, false, "created")?;
-        let changed = format_utc_msec(self.modified_on, &tz, false, "modified")?;
-        let start = format_utc_msec(self.date, &tz, self.all_day, "start date")?;
-        let mut due_date = self.due_date;
-        if self.all_day {
-            // Huly defines all-day event as date={start_day}{00:00:00} due_date={end_day}{23:59:59:999}
-            // While CaldDav clients expect DTEND={end_day+1}{no time part}
-            // Shifting due_date by 1 ms, we switch to the next day
-            due_date += 1;
-        }
-        let end = format_utc_msec(due_date, &tz, self.all_day, "due date")?;
-
-        let ical_event = ical::generator::IcalEventBuilder::tzid(time_zone)
-            .uid(self.event_id.clone().unwrap())
-            .changed(changed.clone());
-        let ical_event = if self.all_day {
-            ical_event
-                .start_day(start)
-                .end_day(end)
-        } else {
-            ical_event
-                .start(start)
-                .end(end)
+        // Create timezone component if not UTC
+        let mut ical_tz = IcalTimeZone {
+            transitions: Vec::new(),
+            properties: Vec::new(),
         };
-        let mut ical_event = ical_event
-            .set(ical::ical_property!("SUMMARY", &self.title))
-            .set(ical::ical_property!("DESCRIPTION", &self.description))
-            .set(ical::ical_property!("CREATED", &created))
-            .set(ical::ical_property!("LAST_MODIFIED", &changed));
-        if let Some(location) = &self.location {
-            ical_event = ical_event.set(ical::ical_property!("LOCATION", location));
-        }
-        if let Some(rules) = &self.rules {
-            let mut rrules: Vec<String> = vec![];
-            for rule in rules {
-                let rrule = rule.to_rrule_string()?;
-                rrules.push(rrule);
+
+        // Add TZID property
+        ical_tz.properties.push(Property {
+            name: "TZID".to_string(),
+            params: None,
+            value: Some(time_zone.clone()),
+        });
+
+        // Create calendar object with VERSION and PRODID
+        let mut ical_cal = IcalCalendar::new();
+        ical_cal.properties.push(Property {
+            name: "TZID".to_string(),
+            params: None,
+            value: Some(time_zone.clone()),
+        });
+
+        // Create event component
+        let mut ical_event = IcalEvent::new();
+        ical_event.properties.push(Property {
+            name: "UID".to_string(),
+            params: None,
+            value: Some(self.id.clone()),
+        });
+        ical_event.properties.push(Property {
+            name: "SUMMARY".to_string(),
+            params: None,
+            value: Some(self.title),
+        });
+
+        // Add description
+        ical_event.properties.push(Property {
+            name: "DESCRIPTION".to_string(),
+            params: None,
+            value: Some(self.description),
+        });
+
+        // Add start and end dates
+        let start_dt = timestamp_to_utc(self.date, "start date")?;
+        let end_dt = timestamp_to_utc(self.due_date, "due date")?;
+        let start_year = start_dt.year();
+        let end_year = end_dt.year();
+
+        // Get timezone transitions for the relevant years
+        for year in start_year..=end_year {
+            let transitions = get_timezone_transitions(&tz, year);
+            if !transitions.is_empty() {
+                add_timezone_transitions(&mut ical_tz, &tz, &transitions);
             }
-            ical_event = ical_event.repeat_rule(rrules.join(";"));
         }
-        if let Some(exdate) = &self.exdate {
-            for dt in exdate {
-                let dt_str = format_utc_msec(*dt, &tz, true, "exdate")?;
-                ical_event = ical_event.set(ical::ical_property!("EXDATE", dt_str, ical::ical_param!("VALUE", "DATE")));
-            }
+
+        // Add start and end dates to event
+        ical_event.properties.push(Property {
+            name: "DTSTART".to_string(),
+            params: Some(vec![("TZID".to_string(), vec![time_zone.clone()])]),
+            value: Some(format_utc_msec(self.date, &tz, false, "start date")?),
+        });
+
+        ical_event.properties.push(Property {
+            name: "DTEND".to_string(),
+            params: Some(vec![("TZID".to_string(), vec![time_zone.clone()])]),
+            value: Some(format_utc_msec(self.due_date, &tz, false, "due date")?),
+        });
+
+        // Add VERSION and PRODID properties
+        ical_cal.properties.push(Property {
+            name: "VERSION".to_string(),
+            params: None,
+            value: Some("2.0".to_string()),
+        });
+        ical_cal.properties.push(Property {
+            name: "PRODID".to_string(),
+            params: None,
+            value: Some("-//Huly Labs//NONSGML Huly Calendar//EN".to_string()),
+        });
+
+        // Add timezone and event components to calendar
+        if time_zone != "UTC" {
+            ical_cal.timezones.push(ical_tz.clone());
         }
-        let ical_event = ical_event
-            .build();
+        ical_cal.events.push(ical_event.clone());
 
-        let mut ical_tz = ical::parser::ical::component::IcalTimeZone::new();
-            ical_tz.add_property(ical::ical_property!("TZID", tz.name()));
-            ical_tz.add_property(ical::ical_property!("X-LIC-LOCATION", tz.name()));
-        // TODO: The "VTIMEZONE" calendar component MUST include
-        // at least one definition of a "STANDARD" or "DAYLIGHT" sub-component
-        // https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5
-    
-        let ical_obj = ical::generator::IcalCalendarBuilder::version("2.0")
-            .gregorian()
-            .prodid("-//Huly Labs//NONSGML Huly Calendar//EN")
-            .add_event(ical_event.clone())
-            .add_tz(ical_tz.clone())
-            .build();
+        // Create calendar object
+        let mut timezones = HashMap::new();
+        if time_zone != "UTC" {
+            timezones.insert(time_zone, ical_tz);
+        }
 
-        let etag = calc_etag(self.event_id.as_ref().unwrap(), self.modified_on);
-
-        let obj = CalendarObject {
-            id: self.event_id.clone().unwrap(),
-            ics: ical_obj.generate(),
-            etag: Some(etag),
+        Ok(CalendarObject {
+            id: self.id,
+            ics: ical_cal.generate(),
+            etag: None,
             data: CalendarObjectComponent::Event(EventObject {
                 event: ical_event,
-                timezones: HashMap::from([(tz.name().to_string(), ical_tz)]),
-            })
-        };
-
-        Ok(obj)
+                timezones,
+            }),
+        })
     }
 }
 
@@ -147,17 +245,22 @@ pub(crate) fn parse_rrule_string(rrules: &str) -> Result<Vec<RecurringRule>, Err
 impl RecurringRule {
     fn to_rrule_string(&self) -> Result<String, Error> {
         let mut parts = vec![format!("FREQ={}", self.freq.to_uppercase())];
+
         if let Some(end_date) = &self.end_date {
             let end_date = timestamp_to_utc(*end_date, "rrule.enddate")?;
             let end_date = end_date.format("%Y%m%dT%H%M%SZ").to_string();
             parts.push(format!("UNTIL={}", end_date));
         }
+
         if let Some(count) = self.count {
             parts.push(format!("COUNT={}", count));
         }
+
         if let Some(interval) = self.interval {
             parts.push(format!("INTERVAL={}", interval));
         }
+
+        // Add remaining RRULE parts
         if let Some(by_second) = &self.by_second {
             parts.push(format!("BYSECOND={}", by_second.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
         }
@@ -188,6 +291,7 @@ impl RecurringRule {
         if let Some(wkst) = &self.wkst {
             parts.push(format!("WKST={}", wkst.join(",")));
         }
+
         Ok(parts.join(";"))
     }
 
