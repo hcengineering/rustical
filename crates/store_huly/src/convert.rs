@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use chrono::{Datelike, DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::OffsetComponents;
 use rustical_store::{CalendarObject, Error};
 use ical::generator::{Emitter, IcalCalendarBuilder, IcalEvent, IcalEventBuilder};
@@ -9,7 +9,7 @@ use ical::property::Property;
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
-use crate::api::{HulyEvent, HulyEventData, RecurringRule, Timestamp};
+use crate::api::{HulyEvent, HulyEventData, HulyEventCreateData, RecurringRule, Timestamp};
 
 pub(crate) fn calc_etag(id: &String, modified_on: Timestamp) -> String {
     let mut hasher = Sha256::new();
@@ -37,7 +37,7 @@ fn format_utc_msec(msec: Timestamp, tz: &chrono_tz::Tz, all_day: bool, name_hint
     Ok(tz_aware.format(ical::generator::ICAL_DATE_FORMAT).to_string())
 }
 
-pub(crate) fn parse_to_utc_msec(time_str: &str, tz: &chrono_tz::Tz, name_hint: &str) -> Result<i64, Error> {
+fn parse_to_utc_msec(time_str: &str, tz: &chrono_tz::Tz, name_hint: &str) -> Result<i64, Error> {
     let local = chrono::NaiveDateTime::parse_from_str(time_str, ical::generator::ICAL_DATE_FORMAT);
     if let Err(err) = local {
         return Err(Error::InvalidData(format!("Invalid timestamp: {}: {}", name_hint, err)))
@@ -367,15 +367,20 @@ impl TryInto<CalendarObject> for HulyEventData {
     }
 }
 
-pub(crate) fn parse_rrule_string(rrules: &str) -> Result<Vec<RecurringRule>, Error> {
+pub(crate) fn parse_rrule_string(rrules: &str) -> Result<Option<Vec<RecurringRule>>, Error> {
     let rules = rrules.split('\n')
         .filter(|s| !s.is_empty())
         .map(RecurringRule::from_rrule_string)
-        .collect();
+        .collect::<Result<Vec<_>, _>>();
     if let Err(err) = rules {
         return Err(Error::InvalidData(format!("Invalid RRULE: {}", err)));
     }
-    Ok(rules.unwrap())
+    let rules = rules.unwrap();
+    Ok(if rules.is_empty() {
+        None
+    } else {
+        Some(rules)
+    })
 }
 
 impl RecurringRule {
@@ -511,5 +516,173 @@ impl RecurringRule {
             return Err("FREQ is required".to_string());
         }
         Ok(rule)
+    }
+}
+
+pub(crate) fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint: &str) -> Result<(Option<Timestamp>, bool), Error> {
+    let Some(value) = &prop.value else {
+        return Ok((None, false))
+    };
+    let Some(params) = &prop.params else {
+        let utc = NaiveDateTime::parse_from_str(value.as_str(), "%Y%m%dT%H%M%SZ");
+        if let Err(err) = utc {
+            return Err(Error::InvalidData(format!("invalid utc date: {}: {}", prop_hint, err)));
+        }
+        let utc = utc.unwrap();
+        let ms = utc.and_utc().timestamp_millis();
+        return Ok((Some(ms), false));
+    };
+    for (param_name, param_values) in params {
+        match param_name.as_str() {
+            // params=Some([("VALUE", ["DATE"])]),
+            "VALUE" => {
+                if param_values.contains(&"DATE".to_string()) {
+                    let local = NaiveDate::parse_from_str(value.as_str(), "%Y%m%d");
+                    if let Err(err) = local {
+                        return Err(Error::InvalidData(format!("invalid date: {}: {}", prop_hint, err)));
+                    }
+                    let local = local.unwrap();
+                    let Some(dt) = local.and_hms_opt(0, 0, 0) else {
+                        return Err(Error::InvalidData(format!("invalid date-time: {}", prop_hint)));
+                    };
+                    let ms = dt.and_utc().timestamp_millis();
+                    return Ok((Some(ms), true));
+                }
+            },
+            // params=Some([("TZID", ["Asia/Novosibirsk"])]), 
+            "TZID" => {
+                if param_values.is_empty() {
+                    return Err(Error::InvalidData(format!("timezone not set: {}", prop_hint)));
+                }
+                let tzid = param_values[0].as_str();
+                let tz = chrono_tz::Tz::from_str(tzid);
+                if let Err(err) = tz {
+                    return Err(Error::InvalidData(format!("invalid timezone: {}: {}", prop_hint, err)));
+                }
+                let tz = tz.unwrap();
+                let ms = parse_to_utc_msec(value.as_str(), &tz, prop_hint)?;
+                return Ok((Some(ms), false));
+            },
+            _ => {},
+        }
+    }
+    return Ok((None, false))
+}
+
+pub(crate) fn from_ical_get_timestamps(event: &IcalEvent) -> Result<(Option<Timestamp>, Option<Timestamp>, bool), Error> {
+    let (start, all_day_1) = if let Some(prop) = event.get_property("DTSTART") {
+        from_ical_get_timestamp(prop, "DTSTART")?
+    } else {
+        (None, false)
+    };
+    let (end, all_day_2) = if let Some(prop) = event.get_property("DTEND") {
+        from_ical_get_timestamp(prop, "DTEND")?
+    } else {
+        (None, false)
+    };
+    // TODO: handle DURATION property
+    // RFC5545: In a "VEVENT" calendar component the property may be
+    // used to specify a duration of the event, instead of an explicit end DATE-TIME
+    let all_day = all_day_1 && all_day_2;
+    if all_day {
+        if let Some(utc_ms) = end {
+            // Huly defines all-day event as date={start_day}{00:00:00} due_date={end_day}{23:59:59:999}
+            // While CaldDav clients sends DTEND={end_day+1}{no time part}
+            // Shifting end date by 1 ms, we switch to the last ms of the prev day
+            return Ok((start, Some(utc_ms-1), true));
+        }
+    }
+    Ok((start, end, all_day))
+}
+
+pub(crate) fn from_ical_get_timestamp_required(event: &IcalEvent, prop_name: &str) -> Result<Timestamp, Error> {
+    let prop = event.get_property(prop_name)
+        .ok_or_else(|| Error::InvalidData(format!("Missing prop: {}", prop_name)))?;
+    let (ts, _) = from_ical_get_timestamp(prop, prop_name)?;
+    ts.ok_or_else(|| Error::InvalidData(format!("Missing field value: {}", prop_name)))
+}
+
+pub(crate) fn from_ical_get_exdate(ical_event: &EventObject) -> Result<Option<Vec<Timestamp>>, Error> {
+    let mut exdate = Vec::new();
+        for prop in &ical_event.event.properties {
+            if prop.name == "EXDATE" {
+                let (dt, _) = from_ical_get_timestamp(prop, "EXDATE")?;
+                if let Some(dt) = dt {
+                    exdate.push(dt);
+                }
+            }
+        }
+    Ok(if exdate.is_empty() {
+        None
+    } else {
+        Some(exdate)
+    })
+}
+
+pub(crate) fn from_ical_get_timezone(ical_event: &EventObject) -> Result<Option<String>, Error> {
+    if ical_event.timezones.len() > 1 {
+        return Err(Error::InvalidData("multiple timezones not supported".into()))
+    }
+    let tzids: Vec<String> = ical_event.timezones.keys().cloned().collect();
+    Ok(tzids.first().cloned())
+}
+
+impl HulyEventCreateData {
+    pub(crate) fn new(cal_id: &str, event_id: &str, event_obj: &EventObject) -> Result<Self, Error> {
+        let (start, end, all_day) = from_ical_get_timestamps(&event_obj.event)?;
+        if start.is_none() {
+            return Err(Error::InvalidData("Missing value: DTSTART".into()));
+        }
+        let start = start.unwrap();
+        if end.is_none() {
+            return Err(Error::InvalidData("Missing value: DTEND".into()));
+        }
+        let end = end.unwrap();
+
+        let mut rules = None;
+        if let Some(prop) = event_obj.event.get_property("RRULE") {
+            if let Some(value) = &prop.value {
+                rules = parse_rrule_string(value.as_str())?;
+            }
+        }
+
+        Ok(Self {
+            calendar: cal_id.to_string(),
+            event_id: event_id.to_string(),
+            date: start.clone(),
+            due_date: end,
+            // TODO: handle markdown
+            description: "".to_string(),
+            // TODO: handle participants
+            participants: None,
+            // TODO: handle reminders
+            reminders: None,
+            title: if let Some(prop) = event_obj.event.get_property("SUMMARY") {
+                if let Some(value) = &prop.value {
+                    value.clone()
+                } else {
+                    return Err(Error::InvalidData("Missing value: SUMMARY".into()));
+                }
+            } else {
+                return Err(Error::InvalidData("Missing value: SUMMARY".into()));
+            },
+            location: if let Some(prop) = event_obj.event.get_property("LOCATION") {
+                if let Some(value) = &prop.value {
+                    Some(value.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            },
+            all_day,
+            // TODO: handle attachments
+            time_zone: from_ical_get_timezone(event_obj)?,
+            access: "owner".to_string(),
+            original_start_time: rules.is_some().then(|| start),
+            rules,
+            exdate: from_ical_get_exdate(event_obj)?,
+            recurring_event_id: None,
+        })
     }
 }
