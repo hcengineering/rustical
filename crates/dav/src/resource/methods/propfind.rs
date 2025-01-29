@@ -29,6 +29,8 @@ pub(crate) async fn route_propfind<R: ResourceService>(
     MultistatusElement<<R::Resource as Resource>::Prop, <R::MemberType as Resource>::Prop>,
     R::Error,
 > {
+    println!("\n### PROPFIND REQUEST {}\n{}\n", req.path(), body);
+
     let resource = resource_service.get_resource(&user, &path).await?;
     let privileges = resource.get_user_privileges(&user)?;
     if !privileges.has(&UserPrivilege::Read) {
@@ -68,9 +70,16 @@ pub(crate) async fn route_propfind<R: ResourceService>(
 
     let response = resource.propfind(req.path(), &props, &user, req.resource_map())?;
 
-    Ok(MultistatusElement {
+    let res = MultistatusElement {
         responses: vec![response],
         member_responses,
         ..Default::default()
-    })
+    };
+
+    let mut output: Vec<_> = b"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".into();
+    let mut writer = quick_xml::Writer::new_with_indent(&mut output, b' ', 4);
+    rustical_xml::XmlSerializeRoot::serialize_root(&res, &mut writer).unwrap();
+    println!("\n### PROPFIND RESPONSE {}\n{}\n", req.path(), String::from_utf8(output).unwrap());
+
+    Ok(res)
 }

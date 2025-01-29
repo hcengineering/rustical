@@ -56,6 +56,8 @@ pub struct CalendarObject {
 
 impl CalendarObject {
     pub fn from_ics(object_id: String, ics: String) -> Result<Self, Error> {
+        println!("#### FROM_ICS {}", ics);
+
         let mut parser = ical::IcalParser::new(BufReader::new(ics.as_bytes()));
         let cal = parser.next().ok_or(Error::NotFound)??;
         if parser.next().is_some() {
