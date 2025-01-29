@@ -33,12 +33,12 @@ struct AccountError {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AccountRequest {
-    method: String,
-    params: Vec<String>,
+struct AccountRequest<'a> {
+    method: &'static str,
+    params: Vec<&'a str>,
 }
 
-async fn account_post<TResult>(url: &str, req: &AccountRequest, token: Option<&str>) -> Result<TResult, Error>
+async fn account_post<'a, TResult>(url: &str, req: &AccountRequest<'a>, token: Option<&str>) -> Result<TResult, Error>
 where
     TResult: for<'de> Deserialize<'de>
 {
@@ -71,8 +71,8 @@ where
 
 async fn login(url: &str, user: &str, password: &str) -> Result<String, Error> {
     let req = AccountRequest {
-        method: "login".to_string(),
-        params: vec![user.to_string(), password.to_string()],
+        method: "login",
+        params: vec![user, password],
     };
     let res = account_post::<AccountLoginResult>(url, &req, None).await?;
     Ok(res.token)
@@ -80,8 +80,8 @@ async fn login(url: &str, user: &str, password: &str) -> Result<String, Error> {
 
 async fn select_workspace(url: &str, token: &str, workspace: &str) -> Result<String, Error> {
     let req = AccountRequest {
-        method: "selectWorkspace".to_string(),
-        params: vec![workspace.to_string(), "external".to_string()],
+        method: "selectWorkspace",
+        params: vec![workspace, "external"],
     };
     let res = account_post::<AccountLoginResult>(url, &req, Some(token)).await?;
     Ok(res.token)
@@ -89,7 +89,7 @@ async fn select_workspace(url: &str, token: &str, workspace: &str) -> Result<Str
 
 pub(crate) async fn get_workspaces(url: &str, token: &str) -> Result<Vec<String>, Error> {
     let req = AccountRequest {
-        method: "getUserWorkspaces".to_string(),
+        method: "getUserWorkspaces",
         params: vec![],
     };
     let res = account_post::<Vec<AccountWorkspaceResult>>(url, &req, Some(token)).await?;
@@ -133,9 +133,9 @@ impl AuthenticationProvider for HulyAuthProvider {
         }
         let ws_token = ws_token.unwrap();
         
-        let account = get_account(&self.api_url, ApiAuth { 
-            token: ws_token.clone(),
-            workspace: workspace.to_string(),
+        let account = get_account(&self.api_url, &ApiAuth { 
+            token: ws_token.as_str(),
+            workspace,
         }).await;
         if let Err(err) = &account {
             tracing::error!("Error getting account: {:?}", err);

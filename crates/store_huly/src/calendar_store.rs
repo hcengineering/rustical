@@ -7,7 +7,9 @@ use ical::{generator::IcalEvent, parser::Component};
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use rustical_store::{auth::User, Calendar, CalendarObject, CalendarStore, Error};
 use super::HulyStore;
-use crate::api::{generate_id, tx, HulyEventCreateData, HulyEventUpdateData, HulyEventTx, Timestamp};
+use crate::api::{generate_id, tx, HulyEventCreateData, HulyEventTx, HulyEventUpdateData, Timestamp, 
+    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_TX_CREATE_DOC, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC, 
+    SPACE_CALENDAR, SPACE_TX, ID_NOT_ATTACHED, COLLECTION_EVENTS};
 use crate::convert::{parse_to_utc_msec, parse_rrule_string, make_calendar_object};
 
 #[async_trait]
@@ -116,27 +118,28 @@ impl CalendarStore for HulyStore {
         let old_event = cache.get_event(user, event_id).await?;
         println!("*** OLD_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
 
-        let tx_id = generate_id(cache.api_url(), user.try_into()?, "core:class:TxUpdateDoc").await?;
+        let auth = user.try_into()?;
+        let tx_id = generate_id(cache.api_url(), &auth, "core:class:TxUpdateDoc").await?;
 
         let remove_tx = HulyEventTx::<()> {
             id: tx_id,
-            class: "core:class:TxRemoveDoc".to_string(),
-            space: "core:space:Tx".to_string(),
-            modified_by: account.clone(),
-            created_by: account.clone(),
-            object_id: old_event.id.clone(),
-            object_class: old_event.class.clone(),
-            object_space: old_event.space.clone(),
+            class: CLASS_TX_REMOVE_DOC,
+            space: SPACE_TX,
+            modified_by: account.as_str(),
+            created_by: account.as_str(),
+            object_id: old_event.id.as_str(),
+            object_class: old_event.class.as_str(),
+            object_space: old_event.space.as_str(),
             operations: None,
             attributes: None,
-            collection: old_event.collection.clone(),
-            attached_to: old_event.attached_to.clone(),
-            attached_to_class: old_event.attached_to_class.clone(),
+            collection: old_event.collection.as_str(),
+            attached_to: old_event.attached_to.as_str(),
+            attached_to_class: old_event.attached_to_class.as_str(),
         };
 
         println!("*** REMOVE TX {}", serde_json::to_string_pretty(&remove_tx).unwrap());
 
-        tx(cache.api_url(), user.try_into()?, remove_tx).await?;
+        tx(cache.api_url(), &auth, &remove_tx).await?;
         cache.invalidate(user);
 
         Ok(())
@@ -365,26 +368,27 @@ impl HulyStore {
             return Ok(());
         }
 
-        let tx_id = generate_id(cache.api_url(), user.try_into()?,"core:class:TxUpdateDoc").await?;
+        let auth = user.try_into()?;
+        let tx_id = generate_id(cache.api_url(), &auth, CLASS_TX_UPDATE_DOC).await?;
 
         let update_tx = HulyEventTx {
             id: tx_id,
-            class: "core:class:TxUpdateDoc".to_string(),
-            space: "core:space:Tx".to_string(),
-            modified_by: account.clone(),
-            created_by: account.clone(),
-            object_id: old_event.id.clone(),
-            object_class: old_event.class.clone(),
-            object_space: old_event.space.clone(),
+            class: CLASS_TX_UPDATE_DOC,
+            space: SPACE_TX,
+            modified_by: account.as_str(),
+            created_by: account.as_str(),
+            object_id: old_event.id.as_str(),
+            object_class: old_event.class.as_str(),
+            object_space: old_event.space.as_str(),
             operations: Some(update_data),
             attributes: None,
-            collection: old_event.collection.clone(),
-            attached_to: old_event.attached_to.clone(),
-            attached_to_class: old_event.attached_to_class.clone(),
+            collection: old_event.collection.as_str(),
+            attached_to: old_event.attached_to.as_str(),
+            attached_to_class: old_event.attached_to_class.as_str(),
         };
 
         println!("*** UPDATE_TX {}", serde_json::to_string_pretty(&update_tx).unwrap());
-        tx(cache.api_url(), user.try_into()?, update_tx).await?;
+        tx(cache.api_url(), &auth, &update_tx).await?;
 
         cache.invalidate(user);
         Ok(())
@@ -450,31 +454,32 @@ impl HulyStore {
             exdate: self.get_exdate(ical_event)?,
         };
 
-        let tx_id = generate_id(cache.api_url(), user.try_into()?,"core:class:TxUpdateDoc").await?;
-        let obj_id = generate_id(cache.api_url(), user.try_into()?,"calendar:class:Event").await?;
+        let auth = user.try_into()?;
+        let tx_id = generate_id(cache.api_url(), &auth, CLASS_TX_CREATE_DOC).await?;
+        let obj_id = generate_id(cache.api_url(), &auth, CLASS_EVENT).await?;
 
         let create_tx = HulyEventTx {
             id: tx_id,
-            class: "core:class:TxCreateDoc".to_string(),
-            space: "core:space:Tx".to_string(),
-            modified_by: account.clone(),
-            created_by: account.clone(),
-            object_id: obj_id,
+            class: CLASS_TX_CREATE_DOC,
+            space: SPACE_TX,
+            modified_by: account.as_str(),
+            created_by: account.as_str(),
+            object_id: obj_id.as_str(),
             object_class: if create_data.rules.is_some() { 
-                "calendar:class:ReccuringEvent"
-            } else { 
-                "calendar:class:Event" 
-            }.to_string(),
-            object_space: "calendar:space:Calendar".to_string(),
+                CLASS_RECURRING_EVENT
+            } else {
+                CLASS_EVENT
+            },
+            object_space: SPACE_CALENDAR,
             operations: None,
             attributes: Some(create_data),
-            collection: "events".to_string(),
-            attached_to: "calendar:ids:NoAttached".to_string(),
-            attached_to_class: "calendar:class:Event".to_string(),
+            collection: COLLECTION_EVENTS,
+            attached_to: ID_NOT_ATTACHED,
+            attached_to_class: CLASS_EVENT,
         };
 
         println!("*** CREATE_TX {}", serde_json::to_string_pretty(&create_tx).unwrap());
-        tx(cache.api_url(), user.try_into()?, create_tx).await?;
+        tx(cache.api_url(), &auth, &create_tx).await?;
 
         cache.invalidate(user);
         Ok(())
