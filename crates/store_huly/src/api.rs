@@ -14,12 +14,13 @@ pub(crate) struct HulyCalendar {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct HulyEvent {
+pub(crate) struct HulyEventSlim {
     pub(crate) event_id: String,
     pub(crate) modified_on: Timestamp,
+    pub(crate) recurring_event_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HulyEventData {
     #[serde(rename = "_id")]
@@ -45,9 +46,11 @@ pub(crate) struct HulyEventData {
     pub(crate) time_zone: Option<String>,
     pub(crate) rules: Option<Vec<RecurringRule>>,
     pub(crate) exdate: Option<Vec<Timestamp>>,
+    pub(crate) is_cancelled: Option<bool>,
+    pub(crate) original_start_time: Option<Timestamp>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Default, Eq, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecurringRule {
     pub(crate) freq: String,

@@ -2,18 +2,10 @@ use std::collections::HashMap;
 use chrono::{Datelike, DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::OffsetComponents;
 use rustical_store::{CalendarObject, Error};
-use ical::{
-    generator::Emitter,
-    parser::{
-        ical::component::{
-            IcalTimeZone,
-            IcalTimeZoneTransition,
-            IcalTimeZoneTransitionType
-        },
-        Component
-    },
-    property::Property
-};
+use ical::generator::{Emitter, IcalCalendarBuilder, IcalEvent, IcalEventBuilder};
+use ical::parser::Component;
+use ical::parser::ical::component::{IcalTimeZone, IcalTimeZoneTransition, IcalTimeZoneTransitionType};
+use ical::property::Property;
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
@@ -121,12 +113,158 @@ fn add_timezone_transitions(ical_tz: &mut IcalTimeZone, transitions: &[TimezoneT
     }
 }
 
+fn make_ical_event(event: &HulyEventData, tz: &chrono_tz::Tz) -> Result<IcalEvent, Error> {
+    let created = format_utc_msec(event.created_on, tz, false, "created")?;
+    let changed = format_utc_msec(event.modified_on, tz, false, "modified")?;
+    let start = format_utc_msec(event.date, tz, event.all_day, "start date")?;
+    let mut due_date = event.due_date;
+    if event.all_day {
+        // Huly defines all-day event as date={start_day}{00:00:00} due_date={end_day}{23:59:59:999}
+        // While CaldDav clients expect DTEND={end_day+1}{no time part}
+        // Shifting due_date by 1 ms, we switch to the next day
+        due_date += 1;
+    }
+    let end = format_utc_msec(due_date, tz, event.all_day, "due date")?;
+
+    let ical_event = ical::generator::IcalEventBuilder::tzid(tz.name())
+        .uid(event.event_id.clone().unwrap())
+        .changed(changed.clone());
+    let ical_event = if event.all_day {
+        ical_event
+            .start_day(start)
+            .end_day(end)
+    } else {
+        ical_event
+            .start(start)
+            .end(end)
+    };
+    let mut ical_event = ical_event
+        .set(ical::ical_property!("SUMMARY", &event.title))
+        .set(ical::ical_property!("DESCRIPTION", &event.description))
+        .set(ical::ical_property!("CREATED", &created))
+        .set(ical::ical_property!("LAST_MODIFIED", &changed));
+    if let Some(location) = &event.location {
+        ical_event = ical_event.set(ical::ical_property!("LOCATION", location));
+    }
+    if let Some(rules) = &event.rules {
+        let mut rrules: Vec<String> = vec![];
+        for rule in rules {
+            let rrule = rule.to_rrule_string()?;
+            rrules.push(rrule);
+        }
+        ical_event = ical_event.repeat_rule(rrules.join(";"));
+    }
+    if let Some(exdate) = &event.exdate {
+        for dt in exdate {
+            let dt_str = format_utc_msec(*dt, tz, true, "exdate")?;
+            ical_event = ical_event.set(ical::ical_property!("EXDATE", dt_str, ical::ical_param!("VALUE", "DATE")));
+        }
+    }
+    let ical_event = ical_event
+        .build();
+    Ok(ical_event)
+}
+
+pub(crate) fn make_calendar_object(events: Vec<HulyEventData>) -> Result<CalendarObject, Error> {
+    // let time_zone = self.time_zone.as_ref()
+    //     .ok_or(Error::InvalidData("No event time zone".into()))?;
+    let utc_time_zone = "UTC".to_string();
+
+    let event = &events[0];
+    let mut modified_on = event.modified_on;
+
+    let time_zone = event.time_zone.as_ref().unwrap_or(&utc_time_zone);
+    let tz = chrono_tz::Tz::from_str(time_zone)
+        .map_err(|err| Error::InvalidData(format!("Invalid event timezone: {}", err)))?;
+
+    let mut ical_event = make_ical_event(event, &tz)?;
+   
+    let mut ical_instances = Vec::new();
+    for instance in events.iter().skip(1) {
+        if instance.modified_on > modified_on {
+            modified_on = instance.modified_on;
+        }
+
+        if instance.is_cancelled.unwrap_or(false) {
+            let dt_str = format_utc_msec(instance.date, &tz, true, "exdate")?;
+            ical_event.add_property(ical::ical_property!("EXDATE", dt_str, ical::ical_param!("VALUE", "DATE")));
+            continue;
+        }
+
+        let Some(original_start_time) = instance.original_start_time else {
+            return Err(Error::InvalidData("Missing value: original_start_time".into()))
+        };
+
+        let mut instance = instance.clone();
+        instance.event_id = event.event_id.clone();
+        instance.rules = None;
+        instance.exdate = None;
+
+        let orig_start = format_utc_msec(original_start_time, &tz, event.all_day, "original_start_time")?;
+
+        let mut ical_instance = make_ical_event(&instance, &tz)?;
+        ical_instance.add_property(ical::ical_property!("RECURRENCE-ID", orig_start, ical::ical_param!("TZID", tz.name())));
+        ical_instance.add_property(ical::ical_property!("SEQUENCE", "1"));
+        ical_instances.push(ical_instance);
+    }
+
+    let mut ical_tz = IcalTimeZone::new();
+        ical_tz.add_property(ical::ical_property!("TZID", tz.name()));
+        ical_tz.add_property(ical::ical_property!("X-LIC-LOCATION", tz.name()));
+
+    // TODO: The "VTIMEZONE" calendar component MUST include
+    // at least one definition of a "STANDARD" or "DAYLIGHT" sub-component
+    // https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5
+    // This is not a proper solution, because it returns transitions only if it detects a DST change in year
+    // But the standard says that there must be at least one transition per year
+    /*
+    let start_dt = timestamp_to_utc(self.date, "start date")?;
+    let end_dt = timestamp_to_utc(self.due_date, "due date")?;
+    let start_year = start_dt.year();
+    let end_year = end_dt.year();
+    for year in start_year..=end_year {
+        let transitions = get_timezone_transitions(&tz, year);
+        if !transitions.is_empty() {
+            add_timezone_transitions(&mut ical_tz, &transitions);
+        }
+    }
+    */
+
+    let mut ical_obj = ical::generator::IcalCalendarBuilder::version("2.0")
+        .gregorian()
+        .prodid("-//Huly Labs//NONSGML Huly Calendar//EN")
+        .add_tz(ical_tz.clone())
+        .add_event(ical_event.clone());
+    for ical_event in ical_instances.into_iter() {
+        ical_obj = ical_obj.add_event(ical_event);
+    }
+    let ical_obj = ical_obj
+        .build();
+
+    let etag = calc_etag(event.event_id.as_ref().unwrap(), modified_on);
+
+    let obj = CalendarObject {
+        id: event.event_id.clone().unwrap(),
+        ics: ical_obj.generate(),
+        etag: Some(etag),
+        data: CalendarObjectComponent::Event(EventObject {
+            event: ical_event,
+            timezones: HashMap::from([(tz.name().to_string(), ical_tz)]),
+        })
+    };
+
+    Ok(obj)
+}
+
 impl TryInto<CalendarObject> for HulyEventData {
     type Error = Error;
 
     fn try_into(self) -> Result<CalendarObject, Self::Error> {
-        let time_zone = self.time_zone.as_ref()
-            .ok_or(Error::InvalidData("No event time zone".into()))?;
+        // let time_zone = self.time_zone.as_ref()
+        //     .ok_or(Error::InvalidData("No event time zone".into()))?;
+        let utc_time_zone = "Etc/GMT".to_string();
+
+        let time_zone = self.time_zone.as_ref().unwrap_or(&utc_time_zone);
         let tz = chrono_tz::Tz::from_str(time_zone)
             .map_err(|err| Error::InvalidData(format!("Invalid event timezone: {}", err)))?;
 
@@ -142,7 +280,7 @@ impl TryInto<CalendarObject> for HulyEventData {
         }
         let end = format_utc_msec(due_date, &tz, self.all_day, "due date")?;
 
-        let ical_event = ical::generator::IcalEventBuilder::tzid(time_zone)
+        let ical_event = IcalEventBuilder::tzid(time_zone)
             .uid(self.event_id.clone().unwrap())
             .changed(changed.clone());
         let ical_event = if self.all_day {
@@ -200,7 +338,7 @@ impl TryInto<CalendarObject> for HulyEventData {
             }
         }
         */
-        let ical_obj = ical::generator::IcalCalendarBuilder::version("2.0")
+        let ical_obj = IcalCalendarBuilder::version("2.0")
             .gregorian()
             .prodid("-//Huly Labs//NONSGML Huly Calendar//EN")
             .add_event(ical_event.clone())

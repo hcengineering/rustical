@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use async_trait::async_trait;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use tracing::instrument;
 use ical::{generator::IcalEvent, parser::Component};
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use rustical_store::{auth::User, Calendar, CalendarObject, CalendarStore, Error};
 use super::HulyStore;
 use crate::api::{generate_id, tx, HulyEventCreateData, HulyEventUpdateData, HulyEventTx, Timestamp};
-use crate::convert::{parse_to_utc_msec, parse_rrule_string};
+use crate::convert::{parse_to_utc_msec, parse_rrule_string, make_calendar_object};
 
 #[async_trait]
 impl CalendarStore for HulyStore {
@@ -84,19 +85,22 @@ impl CalendarStore for HulyStore {
     async fn get_object(&self, user: &User, _: &str, event_id: &str) -> Result<CalendarObject, Error> {
         tracing::debug!("GET_OBJECT user={}, ws={:?}, event={}", user.id, user.workspace, event_id);
         let mut cache = self.calendar_cache.lock().await;
-        let event = cache.get_event(user, event_id).await?;
-        let cal_obj: CalendarObject = event.try_into()?;
-        println!("*** RETURN {}", cal_obj.get_ics());
+        let events = cache.get_event_ex(user, event_id).await?;
+        let cal_obj: CalendarObject = make_calendar_object(events)?;
+        println!("*** RETURN\n{}", cal_obj.get_ics());
         Ok(cal_obj)
     }
 
     #[instrument]
     async fn put_object(&self, user: &User, _: String, object: CalendarObject, overwrite: bool) -> Result<(), Error> {
         tracing::debug!("PUT_OBJECT user={}, ws={:?}, object={:?}, overwrite={}", user.id, user.workspace, object, overwrite);
-        println!("{}", object.get_ics());
+        println!("*** PUT_OBJECT:\n{}", object.get_ics());
         let CalendarObjectComponent::Event(ical_event) =  &object.data else {
             return Err(Error::InvalidData("invalid object type, must be event".into()))
         };
+        for prop in ical_event.event.properties.iter() {
+            println!("*** PROP: {:?}", prop);
+        }
         if overwrite {
             self.update_event(user, object.id.as_str(), ical_event).await
         } else {
@@ -106,10 +110,11 @@ impl CalendarStore for HulyStore {
 
     #[instrument]
     async fn delete_object(&self, user: &User, _: &str, event_id: &str, use_trashbin: bool) -> Result<(), Error> {
+        let account = self.get_account(user)?;
         tracing::debug!("DELETE_OBJECT user={}, ws={:?}, event_id={:?}, use_trashbin={}", user.id, user.workspace, event_id, use_trashbin);
         let mut cache = self.calendar_cache.lock().await;
         let old_event = cache.get_event(user, event_id).await?;
-        println!("*** old_event: {}", serde_json::to_string_pretty(&old_event).unwrap());
+        println!("*** OLD_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
 
         let tx_id = generate_id(cache.api_url(), user.try_into()?, "core:class:TxUpdateDoc").await?;
 
@@ -117,9 +122,8 @@ impl CalendarStore for HulyStore {
             id: tx_id,
             class: "core:class:TxRemoveDoc".to_string(),
             space: "core:space:Tx".to_string(),
-            // TODO: extract user ids from workspace token
-            modified_by: old_event.modified_by.clone(),
-            created_by: old_event.modified_by.clone(),
+            modified_by: account.clone(),
+            created_by: account.clone(),
             object_id: old_event.id.clone(),
             object_class: old_event.class.clone(),
             object_space: old_event.space.clone(),
@@ -151,19 +155,29 @@ impl CalendarStore for HulyStore {
 }
 
 impl HulyStore {
+    fn get_account<'a>(&self, user: &'a User) -> Result<&'a String, Error> {
+        user.account.as_ref().ok_or(Error::InvalidData("Missing user account id".into()))
+    }
+
     fn get_timestamp(&self, prop: &ical::property::Property, prop_name: &str) -> Result<(Option<Timestamp>, bool), Error> {
         let Some(value) = &prop.value else {
             return Ok((None, false))
         };
         let Some(params) = &prop.params else {
-            return Ok((None, false))
+            let utc = NaiveDateTime::parse_from_str(value.as_str(), "%Y%m%dT%H%M%SZ");
+            if let Err(err) = utc {
+                return Err(Error::InvalidData(format!("invalid utc date: {}: {}", prop_name, err)));
+            }
+            let utc = utc.unwrap();
+            let ms = utc.and_utc().timestamp_millis();
+            return Ok((Some(ms), false));
         };
         for (param_name, param_values) in params {
             match param_name.as_str() {
                 // params=Some([("VALUE", ["DATE"])]),
                 "VALUE" => {
                     if param_values.contains(&"DATE".to_string()) {
-                        let local = chrono::NaiveDate::parse_from_str(value.as_str(), "%Y%m%d");
+                        let local = NaiveDate::parse_from_str(value.as_str(), "%Y%m%d");
                         if let Err(err) = local {
                             return Err(Error::InvalidData(format!("invalid date: {}: {}", prop_name, err)));
                         }
@@ -247,6 +261,7 @@ impl HulyStore {
     }
 
     async fn update_event(&self, user: &User, event_id: &str, ical_event: &EventObject) -> Result<(), Error> {
+        let account = self.get_account(user)?;
         let mut cache = self.calendar_cache.lock().await;
         let old_event = cache.get_event(user, event_id).await?;
         println!("*** old_event: {}", serde_json::to_string_pretty(&old_event).unwrap());
@@ -356,9 +371,8 @@ impl HulyStore {
             id: tx_id,
             class: "core:class:TxUpdateDoc".to_string(),
             space: "core:space:Tx".to_string(),
-            // TODO: extract user ids from workspace token
-            modified_by: old_event.modified_by.clone(),
-            created_by: old_event.modified_by.clone(),
+            modified_by: account.clone(),
+            created_by: account.clone(),
             object_id: old_event.id.clone(),
             object_class: old_event.class.clone(),
             object_space: old_event.space.clone(),
@@ -377,6 +391,7 @@ impl HulyStore {
     }
 
     async fn create_event(&self, user: &User, event_id: &str, ical_event: &EventObject) -> Result<(), Error> {
+        let account = self.get_account(user)?;
         let mut cache = self.calendar_cache.lock().await;
         let cal_id = cache.get_calendar_id(user).await?;
 
@@ -442,9 +457,8 @@ impl HulyStore {
             id: tx_id,
             class: "core:class:TxCreateDoc".to_string(),
             space: "core:space:Tx".to_string(),
-            // TODO: extract user ids from workspace token
-            modified_by: "67850773c1fb9ed8f44589f5".to_string(),
-            created_by: "67850773c1fb9ed8f44589f5".to_string(),
+            modified_by: account.clone(),
+            created_by: account.clone(),
             object_id: obj_id,
             object_class: if create_data.rules.is_some() { 
                 "calendar:class:ReccuringEvent"
