@@ -1,16 +1,23 @@
 use std::collections::HashMap;
-use std::str::FromStr;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use tracing::instrument;
-use ical::{generator::IcalEvent, parser::Component};
+use ical::parser::Component;
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use rustical_store::{auth::User, Calendar, CalendarObject, CalendarStore, Error};
 use super::HulyStore;
-use crate::api::{generate_id, tx, HulyEventCreateData, HulyEventTx, HulyEventUpdateData, Timestamp, 
-    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_TX_CREATE_DOC, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC, 
-    SPACE_CALENDAR, SPACE_TX, ID_NOT_ATTACHED, COLLECTION_EVENTS};
-use crate::convert::{parse_to_utc_msec, parse_rrule_string};
+use crate::api::{
+    generate_id, tx, tx_create_event, HulyEvent, HulyEventData, HulyEventCreateData, HulyEventTx, HulyEventUpdateData,
+    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE, CLASS_TX_CREATE_DOC, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC,
+    SPACE_CALENDAR, SPACE_TX, ID_NOT_ATTACHED, COLLECTION_EVENTS,
+};
+use crate::convert::{
+    parse_rrule_string, from_ical_get_timezone, from_ical_get_timestamp_required,
+    from_ical_get_timestamps, from_ical_get_exdate
+};
+
+fn get_account<'a>(user: &'a User) -> Result<&'a str, Error> {
+    user.account.as_ref().map(|s| s.as_str()).ok_or(Error::InvalidData("Missing user account id".into()))
+}
 
 #[async_trait]
 impl CalendarStore for HulyStore {
@@ -89,30 +96,38 @@ impl CalendarStore for HulyStore {
         let mut cache = self.calendar_cache.lock().await;
         let event = cache.get_event_ex(user, event_id).await?;
         let cal_obj: CalendarObject = event.try_into()?;
-        println!("*** RETURN\n{}", cal_obj.get_ics());
+        println!("*** RETURN:\n{}", cal_obj.get_ics());
         Ok(cal_obj)
     }
 
     #[instrument]
     async fn put_object(&self, user: &User, _: String, object: CalendarObject, overwrite: bool) -> Result<(), Error> {
         tracing::debug!("PUT_OBJECT user={}, ws={:?}, object={:?}, overwrite={}", user.id, user.workspace, object, overwrite);
-        println!("*** PUT_OBJECT:\n{}", object.get_ics());
-        let CalendarObjectComponent::Event(ical_event) =  &object.data else {
-            return Err(Error::InvalidData("invalid object type, must be event".into()))
-        };
-        for prop in ical_event.event.properties.iter() {
-            println!("*** PROP: {:?}", prop);
-        }
+        println!("\n*** PUT_OBJECT:\n{}\n", object.get_ics());
+        let event_id = object.id.as_str();
         if overwrite {
-            self.update_event(user, object.id.as_str(), ical_event).await
+            match &object.data {
+                CalendarObjectComponent::Event(event_obj) => {
+                    self.update_event(user, event_id, event_obj).await
+                }
+                CalendarObjectComponent::Events(event_objs) => {
+                    self.update_recurring_event(user, event_id, event_objs).await
+                }
+                _ => {
+                    return Err(Error::InvalidData("invalid object type, must be event(s)".into()))
+                }
+            }
         } else {
-            self.create_event(user, object.id.as_str(), ical_event).await
+            let CalendarObjectComponent::Event(event_obj) =  &object.data else {
+                return Err(Error::InvalidData("invalid object type, must be event".into()))
+            };
+            self.create_event(user, event_id, event_obj).await
         }
     }
 
     #[instrument]
     async fn delete_object(&self, user: &User, _: &str, event_id: &str, use_trashbin: bool) -> Result<(), Error> {
-        let account = self.get_account(user)?;
+        let account = get_account(user)?;
         tracing::debug!("DELETE_OBJECT user={}, ws={:?}, event_id={:?}, use_trashbin={}", user.id, user.workspace, event_id, use_trashbin);
         let mut cache = self.calendar_cache.lock().await;
         let old_event = cache.get_event(user, event_id).await?;
@@ -125,8 +140,8 @@ impl CalendarStore for HulyStore {
             id: tx_id,
             class: CLASS_TX_REMOVE_DOC,
             space: SPACE_TX,
-            modified_by: account.as_str(),
-            created_by: account.as_str(),
+            modified_by: account,
+            created_by: account,
             object_id: old_event.id.as_str(),
             object_class: old_event.class.as_str(),
             object_space: old_event.space.as_str(),
@@ -158,119 +173,21 @@ impl CalendarStore for HulyStore {
 }
 
 impl HulyStore {
-    fn get_account<'a>(&self, user: &'a User) -> Result<&'a String, Error> {
-        user.account.as_ref().ok_or(Error::InvalidData("Missing user account id".into()))
-    }
-
-    fn get_timestamp(&self, prop: &ical::property::Property, prop_name: &str) -> Result<(Option<Timestamp>, bool), Error> {
-        let Some(value) = &prop.value else {
-            return Ok((None, false))
-        };
-        let Some(params) = &prop.params else {
-            let utc = NaiveDateTime::parse_from_str(value.as_str(), "%Y%m%dT%H%M%SZ");
-            if let Err(err) = utc {
-                return Err(Error::InvalidData(format!("invalid utc date: {}: {}", prop_name, err)));
-            }
-            let utc = utc.unwrap();
-            let ms = utc.and_utc().timestamp_millis();
-            return Ok((Some(ms), false));
-        };
-        for (param_name, param_values) in params {
-            match param_name.as_str() {
-                // params=Some([("VALUE", ["DATE"])]),
-                "VALUE" => {
-                    if param_values.contains(&"DATE".to_string()) {
-                        let local = NaiveDate::parse_from_str(value.as_str(), "%Y%m%d");
-                        if let Err(err) = local {
-                            return Err(Error::InvalidData(format!("invalid date: {}: {}", prop_name, err)));
-                        }
-                        let local = local.unwrap();
-                        let Some(dt) = local.and_hms_opt(0, 0, 0) else {
-                            return Err(Error::InvalidData(format!("invalid date-time: {}", prop_name)));
-                        };
-                        let ms = dt.and_utc().timestamp_millis();
-                        return Ok((Some(ms), true));
-                    }
-                },
-                // params=Some([("TZID", ["Asia/Novosibirsk"])]), 
-                "TZID" => {
-                    if param_values.is_empty() {
-                        return Err(Error::InvalidData(format!("timezone not set: {}", prop_name)));
-                    }
-                    let tzid = param_values[0].as_str();
-                    let tz = chrono_tz::Tz::from_str(tzid);
-                    if let Err(err) = tz {
-                        return Err(Error::InvalidData(format!("invalid timezone: {}: {}", prop_name, err)));
-                    }
-                    let tz = tz.unwrap();
-                    let ms = parse_to_utc_msec(value.as_str(), &tz, prop_name)?;
-                    return Ok((Some(ms), false));
-                },
-                _ => {},
-            }
-        }
-        return Ok((None, false))
-    }
-
-    fn get_timestamps(&self, event: &IcalEvent) -> Result<(Option<Timestamp>, Option<Timestamp>, bool), Error> {
-        let (start, all_day_1) = if let Some(prop) = event.get_property("DTSTART") {
-            self.get_timestamp(prop, "DTSTART")?
-        } else {
-            (None, false)
-        };
-        let (end, all_day_2) = if let Some(prop) = event.get_property("DTEND") {
-            self.get_timestamp(prop, "DTEND")?
-        } else {
-            (None, false)
-        };
-        // TODO: handle DURATION property
-        // RFC5545: In a "VEVENT" calendar component the property may be
-        // used to specify a duration of the event, instead of an explicit end DATE-TIME
-        let all_day = all_day_1 && all_day_2;
-        if all_day {
-            if let Some(utc_ms) = end {
-                // Huly defines all-day event as date={start_day}{00:00:00} due_date={end_day}{23:59:59:999}
-                // While CaldDav clients sends DTEND={end_day+1}{no time part}
-                // Shifting end date by 1 ms, we switch to the last ms of the prev day
-                return Ok((start, Some(utc_ms-1), true));
-            }
-        }
-        Ok((start, end, all_day))
-    }
-
-    fn get_timezone(&self, ical_event: &EventObject) -> Result<Option<String>, Error> {
-        if ical_event.timezones.len() > 1 {
-            return Err(Error::InvalidData("multiple timezones not supported".into()))
-        }
-        let tzids: Vec<String> = ical_event.timezones.keys().cloned().collect();
-        Ok(tzids.first().cloned())
-    }
-
-    fn get_exdate(&self, ical_event: &EventObject) -> Result<Option<Vec<Timestamp>>, Error> {
-        let mut exdate = Vec::new();
-            for prop in &ical_event.event.properties {
-                if prop.name == "EXDATE" {
-                    let (dt, _) = self.get_timestamp(prop, "EXDATE")?;
-                    if let Some(dt) = dt {
-                        exdate.push(dt);
-                    }
-                }
-            }
-        Ok(if exdate.is_empty() {
-            None
-        } else {
-            Some(exdate)
-        })
-    }
-
-    async fn update_event(&self, user: &User, event_id: &str, ical_event: &EventObject) -> Result<(), Error> {
-        let account = self.get_account(user)?;
+    async fn create_event(&self, user: &User, event_id: &str, event_obj: &EventObject) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
-        let old_event = cache.get_event(user, event_id).await?;
-        println!("*** old_event: {}", serde_json::to_string_pretty(&old_event).unwrap());
+        let cal_id = cache.get_calendar_id(user).await?;
+        let data = HulyEventCreateData::new(cal_id.as_str(), event_id, event_obj)?;
+        let class = if data.rules.is_some() { CLASS_RECURRING_EVENT } else { CLASS_EVENT };
+        tx_create_event(cache.api_url(), user, class, &data).await?;
+        cache.invalidate(user);
+        Ok(())
+    }
+
+    async fn update_event_raw(&self, user: &User, api_url: &str, old_event: &HulyEventData, event_obj: &EventObject) -> Result<(), Error> {
+        let account = get_account(user)?;
         let mut update_data = HulyEventUpdateData::default();
         let mut update_count = 0;
-        if let Some(prop) = ical_event.event.get_property("SUMMARY") {
+        if let Some(prop) = event_obj.event.get_property("SUMMARY") {
             if let Some(value) = &prop.value {
                 if *value != old_event.title {
                     update_data.title = Some(value.clone());
@@ -287,7 +204,7 @@ impl HulyStore {
         //         }
         //     }
         // }
-        if let Some(prop) = ical_event.event.get_property("LOCATION") {
+        if let Some(prop) = event_obj.event.get_property("LOCATION") {
             if let Some(value) = &prop.value {
                 if let Some(old_value) = &old_event.location {
                     if value != old_value {
@@ -300,7 +217,7 @@ impl HulyStore {
                 }
             }
         }
-        let (start, end, all_day) = self.get_timestamps(&ical_event.event)?;
+        let (start, end, all_day) = from_ical_get_timestamps(&event_obj.event)?;
         if let Some(utc_msec) = start {
             if utc_msec != old_event.date {
                 update_data.date = Some(utc_msec);
@@ -321,15 +238,14 @@ impl HulyStore {
         // There is no direct way in Huly to change event recurrency
         // ReccuringEvent is a different object class and must be recreated
         let is_old_recurrent = old_event.rules.is_some();
-        if let Some(prop) = ical_event.event.get_property("RRULE") {
+        if let Some(prop) = event_obj.event.get_property("RRULE") {
             if let Some(value) = &prop.value {
                 if !is_old_recurrent {
                     return Err(Error::InvalidData("Unable change event recurrency".into()));
                 }
                 let rules = parse_rrule_string(value.as_str())?;
-                let old_rules = old_event.rules.unwrap();
-                if rules != old_rules {
-                    update_data.rules = Some(rules);
+                if old_event.rules != rules {
+                    update_data.rules = rules;
                     update_count += 1;
                 }
             } else if is_old_recurrent {
@@ -339,17 +255,17 @@ impl HulyStore {
             return Err(Error::InvalidData("Unable change event recurrency".into()));
         }
         if is_old_recurrent {
-            let exdate = self.get_exdate(ical_event)?;
+            let exdate = from_ical_get_exdate(event_obj)?;
             if old_event.exdate != exdate {
                 update_data.exdate = exdate;
                 update_count += 1;
             }
         }
 
-        let time_zone = self.get_timezone(ical_event)?;
+        let time_zone = from_ical_get_timezone(event_obj)?;
         if let Some(time_zone) = time_zone {
-            if let Some(old_time_zone) = old_event.time_zone {
-                if time_zone != old_time_zone {
+            if let Some(old_time_zone) = &old_event.time_zone {
+                if &time_zone != old_time_zone {
                     update_data.time_zone = Some(time_zone);
                     update_count += 1;
                 }
@@ -369,14 +285,14 @@ impl HulyStore {
         }
 
         let auth = user.try_into()?;
-        let tx_id = generate_id(cache.api_url(), &auth, CLASS_TX_UPDATE_DOC).await?;
+        let tx_id = generate_id(api_url, &auth, CLASS_TX_UPDATE_DOC).await?;
 
         let update_tx = HulyEventTx {
             id: tx_id,
             class: CLASS_TX_UPDATE_DOC,
             space: SPACE_TX,
-            modified_by: account.as_str(),
-            created_by: account.as_str(),
+            modified_by: account,
+            created_by: account,
             object_id: old_event.id.as_str(),
             object_class: old_event.class.as_str(),
             object_space: old_event.space.as_str(),
@@ -388,99 +304,47 @@ impl HulyStore {
         };
 
         println!("*** UPDATE_TX {}", serde_json::to_string_pretty(&update_tx).unwrap());
-        tx(cache.api_url(), &auth, &update_tx).await?;
+        tx(api_url, &auth, &update_tx).await
+    }
 
+    async fn update_event(&self, user: &User, event_id: &str, event_obj: &EventObject) -> Result<(), Error> {
+        let mut cache = self.calendar_cache.lock().await;
+        let old_event = cache.get_event(user, event_id).await?;
+        println!("*** OLD_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
+        self.update_event_raw(user, cache.api_url(), &old_event, event_obj).await?;
         cache.invalidate(user);
         Ok(())
     }
 
-    async fn create_event(&self, user: &User, event_id: &str, ical_event: &EventObject) -> Result<(), Error> {
-        let account = self.get_account(user)?;
+    async fn create_recurring_instance(&self, user: &User, api_url: &str, cal_id: &str, event_id: &str, event_obj: &EventObject) -> Result<(), Error> {
+        let instance_id = generate_id(api_url, &user.try_into()?, CLASS_RECURRING_INSTANCE).await?;
+        let mut data = HulyEventCreateData::new(cal_id, instance_id.as_str(), event_obj)?;
+        let original_start_time = from_ical_get_timestamp_required(&event_obj.event, "RECURRENCE-ID")?;
+        data.original_start_time = Some(original_start_time);
+        data.recurring_event_id = Some(event_id.to_string());
+        tx_create_event(api_url, user, CLASS_RECURRING_INSTANCE, &data).await
+    }
+
+    async fn update_recurring_instance(&self, user: &User, api_url: &str, old_event: &HulyEvent, event_obj: &EventObject) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn update_recurring_event(&self, user: &User, event_id: &str, event_objs: &Vec<EventObject>) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
         let cal_id = cache.get_calendar_id(user).await?;
-
-        let (start, end, all_day) = self.get_timestamps(&ical_event.event)?;
-        if start.is_none() {
-            return Err(Error::InvalidData("Missing value: DTSTART".into()));
-        }
-        let start = start.unwrap();
-        if end.is_none() {
-            return Err(Error::InvalidData("Missing value: DTEND".into()));
-        }
-        let end = end.unwrap();
-
-        let mut rules = None;
-        if let Some(prop) = ical_event.event.get_property("RRULE") {
-            if let Some(value) = &prop.value {
-                rules = Some(parse_rrule_string(value.as_str())?);
+        let old_event = cache.get_event_ex(user, event_id).await?;
+        println!("*** OLD_RECURRING_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
+        for event_obj in event_objs {
+            if event_obj.event.get_property("RECURRENCE-ID").is_some() {
+                if old_event.instances.is_none() {
+                    self.create_recurring_instance(user, cache.api_url(), cal_id.as_str(), event_id, event_obj).await?;
+                } else {
+                    self.update_recurring_instance(user, cache.api_url(), &old_event, event_obj).await?;
+                }
+            } else {
+                self.update_event_raw(user, cache.api_url(), &old_event.data, event_obj).await?;
             }
         }
-
-        let create_data = HulyEventCreateData {
-            calendar: cal_id.clone(),
-            event_id: event_id.to_string(),
-            date: start.clone(),
-            due_date: end,
-            // TODO: handle markdown
-            description: "".to_string(),
-            // TODO: handle participants
-            participants: None,
-            // TODO: handle reminders
-            reminders: None,
-            title: if let Some(prop) = ical_event.event.get_property("SUMMARY") {
-                if let Some(value) = &prop.value {
-                    value.clone()
-                } else {
-                    return Err(Error::InvalidData("Missing value: SUMMARY".into()));
-                }
-            } else {
-                return Err(Error::InvalidData("Missing value: SUMMARY".into()));
-            },
-            location: if let Some(prop) = ical_event.event.get_property("LOCATION") {
-                if let Some(value) = &prop.value {
-                    Some(value.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            },
-            all_day,
-            // TODO: handle attachments
-            time_zone: self.get_timezone(ical_event)?,
-            access: "owner".to_string(),
-            original_start_time: rules.is_some().then(|| start),
-            rules,
-            exdate: self.get_exdate(ical_event)?,
-        };
-
-        let auth = user.try_into()?;
-        let tx_id = generate_id(cache.api_url(), &auth, CLASS_TX_CREATE_DOC).await?;
-        let obj_id = generate_id(cache.api_url(), &auth, CLASS_EVENT).await?;
-
-        let create_tx = HulyEventTx {
-            id: tx_id,
-            class: CLASS_TX_CREATE_DOC,
-            space: SPACE_TX,
-            modified_by: account.as_str(),
-            created_by: account.as_str(),
-            object_id: obj_id.as_str(),
-            object_class: if create_data.rules.is_some() { 
-                CLASS_RECURRING_EVENT
-            } else {
-                CLASS_EVENT
-            },
-            object_space: SPACE_CALENDAR,
-            operations: None,
-            attributes: Some(create_data),
-            collection: COLLECTION_EVENTS,
-            attached_to: ID_NOT_ATTACHED,
-            attached_to_class: CLASS_EVENT,
-        };
-
-        println!("*** CREATE_TX {}", serde_json::to_string_pretty(&create_tx).unwrap());
-        tx(cache.api_url(), &auth, &create_tx).await?;
-
         cache.invalidate(user);
         Ok(())
     }

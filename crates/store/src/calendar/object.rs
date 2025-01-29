@@ -41,6 +41,7 @@ impl rustical_xml::ValueDeserialize for CalendarObjectType {
 #[derive(Debug, Clone)]
 pub enum CalendarObjectComponent {
     Event(EventObject),
+    Events(Vec<EventObject>),
     Todo(TodoObject),
     Journal(JournalObject),
 }
@@ -64,6 +65,7 @@ impl CalendarObject {
                 "multiple calendars, only one allowed".to_owned(),
             ));
         }
+        /*
         if cal.events.len()
             + cal.alarms.len()
             + cal.todos.len()
@@ -76,6 +78,7 @@ impl CalendarObject {
                 "iCalendar object is only allowed to have exactly one component".to_owned(),
             ));
         }
+        */
 
         let timezones: HashMap<String, IcalTimeZone> = cal
             .timezones
@@ -88,6 +91,30 @@ impl CalendarObject {
             })
             .collect();
 
+        if !cal.events.is_empty() {
+            if cal.events.len() == 1 {
+                return Ok(CalendarObject {
+                    id: object_id,
+                    ics,
+                    etag: None,
+                    data: CalendarObjectComponent::Event(EventObject {
+                        event: cal.events.first().unwrap().clone(),
+                        timezones,
+                    }),
+                });
+            }
+            let events = cal.events.into_iter().map(|event| EventObject {
+                event: event.clone(),
+                timezones: timezones.clone(),
+            }).collect();
+            return Ok(CalendarObject {
+                id: object_id,
+                ics,
+                etag: None,
+                data: CalendarObjectComponent::Events(events),
+            });
+        }
+        /*
         if let Some(event) = cal.events.first() {
             return Ok(CalendarObject {
                 id: object_id,
@@ -99,6 +126,7 @@ impl CalendarObject {
                 }),
             });
         }
+        */
         if let Some(todo) = cal.todos.first() {
             return Ok(CalendarObject {
                 id: object_id,
@@ -141,6 +169,7 @@ impl CalendarObject {
         match self.data {
             CalendarObjectComponent::Todo(_) => "VTODO",
             CalendarObjectComponent::Event(_) => "VEVENT",
+            CalendarObjectComponent::Events(_) => "VEVENT",
             CalendarObjectComponent::Journal(_) => "VJOURNAL",
         }
     }
@@ -149,6 +178,7 @@ impl CalendarObject {
         match self.data {
             CalendarObjectComponent::Todo(_) => CalendarObjectType::Todo,
             CalendarObjectComponent::Event(_) => CalendarObjectType::Event,
+            CalendarObjectComponent::Events(_) => CalendarObjectType::Event,
             CalendarObjectComponent::Journal(_) => CalendarObjectType::Journal,
         }
     }
