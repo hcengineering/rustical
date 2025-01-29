@@ -61,6 +61,8 @@ pub(crate) struct HulyEventData {
     pub(crate) original_start_time: Option<Timestamp>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct HulyEvent {
     pub(crate) data: HulyEventData,
     pub(crate) instances: Option<Vec<HulyEventData>>,
@@ -137,6 +139,8 @@ pub(crate) struct HulyEventCreateData {
     pub(crate) exdate: Option<Vec<Timestamp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) original_start_time: Option<Timestamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) recurring_event_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -307,4 +311,29 @@ pub(crate) async fn get_account<'u>(url: &str, auth: &ApiAuth<'u>) -> Result<Hul
     let p: Option<&FindParams> = None;
     let account: HulyAccount = api_call(url, HttpMethod::Get, "account", auth, p).await?;
     Ok(account)
+}
+
+pub(crate) async fn tx_create_event(url: &str, user: &User, class: &str, data: &HulyEventCreateData) -> Result<(), Error> {
+    let auth = user.try_into()?;
+    let account = user.account.as_ref().map(|s| s.as_str()).ok_or_else(|| Error::InvalidData("Missing user account id".into()))?;
+    let tx_id = generate_id(url, &auth, CLASS_TX_CREATE_DOC).await?;
+    let obj_id = generate_id(url, &auth, class).await?;
+    let create_tx = HulyEventTx {
+        id: tx_id,
+        class: CLASS_TX_CREATE_DOC,
+        space: SPACE_TX,
+        modified_by: account,
+        created_by: account,
+        object_id: obj_id.as_str(),
+        object_class: class,
+        object_space: SPACE_CALENDAR,
+        operations: None,
+        attributes: Some(data),
+        collection: COLLECTION_EVENTS,
+        attached_to: ID_NOT_ATTACHED,
+        attached_to_class: CLASS_EVENT,
+    };
+    println!("*** CREATE_TX {}", serde_json::to_string_pretty(&create_tx).unwrap());
+    tx(url, &auth, &create_tx).await?;
+    Ok(())
 }

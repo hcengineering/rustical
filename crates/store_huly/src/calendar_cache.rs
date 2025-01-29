@@ -222,7 +222,10 @@ impl HulyCalendarCache {
                 ]),
                 options: None,
             };
-            instances = Some(find_all::<Vec<HulyEventData>>(&self.api_url, &auth, &params).await?);
+            let insts = find_all::<Vec<HulyEventData>>(&self.api_url, &auth, &params).await?;
+            if !insts.is_empty() {
+                instances = Some(insts);
+            }
         }
 
         let event = HulyEvent {
