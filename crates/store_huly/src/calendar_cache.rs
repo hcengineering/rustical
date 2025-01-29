@@ -185,8 +185,8 @@ impl HulyCalendarCache {
         Ok(event)
     }
 
-    pub(crate) async fn get_event_ex(&mut self, user: &User, event_id: &str) -> Result<Vec<HulyEventData>, Error> {
-        println!("### GET_EVENT {}", event_id);
+    pub(crate) async fn get_event_ex(&mut self, user: &User, event_id: &str) -> Result<HulyEvent, Error> {
+        println!("\n### GET_EVENT {}\n", event_id);
         let entry = if let Some(entry) = self.get_entry(user)? {
             entry
         } else {
@@ -209,9 +209,10 @@ impl HulyCalendarCache {
         if events.len() > 1 {
             return Err(Error::InvalidData("multiple events found".into()))
         }
-        let event = &mut events[0];
+        let mut event = events.remove(0);
         event.event_id = Some(event_id.to_string());
 
+        let mut instances = None;
         if event.class == CLASS_RECURRING_EVENT {
             let params = FindParams {
                 class: CLASS_RECURRING_INSTANCE,
@@ -221,11 +222,15 @@ impl HulyCalendarCache {
                 ]),
                 options: None,
             };
-            let instances = find_all::<Vec<HulyEventData>>(&self.api_url, &auth, &params).await?;
-            events.extend(instances.into_iter());
+            instances = Some(find_all::<Vec<HulyEventData>>(&self.api_url, &auth, &params).await?);
         }
 
-        Ok(events)
+        let event = HulyEvent {
+            data: event,
+            instances,
+        };
+
+        Ok(event)
     }
 
 }
