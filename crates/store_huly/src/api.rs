@@ -4,6 +4,17 @@ use rustical_store::{auth::User, Error};
 
 pub(crate) type Timestamp = i64;
 
+pub(crate) const CLASS_EVENT: &str = "calendar:class:Event";
+pub(crate) const CLASS_RECURRING_EVENT: &str = "calendar:class:ReccuringEvent";
+pub(crate) const CLASS_RECURRING_INSTANCE: &str = "calendar:class:ReccuringInstance";
+pub(crate) const CLASS_TX_CREATE_DOC: &str = "core:class:TxCreateDoc";
+pub(crate) const CLASS_TX_REMOVE_DOC: &str = "core:class:TxRemoveDoc";
+pub(crate) const CLASS_TX_UPDATE_DOC: &str = "core:class:TxUpdateDoc";
+pub(crate) const SPACE_CALENDAR: &str = "calendar:space:Calendar";
+pub(crate) const SPACE_TX: &str = "core:space:Tx";
+pub(crate) const ID_NOT_ATTACHED: &str = "calendar:ids:NoAttached";
+pub(crate) const COLLECTION_EVENTS: &str = "events";
+
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HulyCalendar {
@@ -48,6 +59,11 @@ pub(crate) struct HulyEventData {
     pub(crate) exdate: Option<Vec<Timestamp>>,
     pub(crate) is_cancelled: Option<bool>,
     pub(crate) original_start_time: Option<Timestamp>,
+}
+
+pub(crate) struct HulyEvent {
+    pub(crate) data: HulyEventData,
+    pub(crate) instances: Option<Vec<HulyEventData>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Eq, PartialEq, Clone)]
@@ -125,24 +141,24 @@ pub(crate) struct HulyEventCreateData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct HulyEventTx<T> {
+pub(crate) struct HulyEventTx<'a, T> {
     #[serde(rename = "_id")]
     pub(crate) id: String,
     #[serde(rename = "_class")]
-    pub(crate) class: String,
-    pub(crate) space: String,
-    pub(crate) created_by: String,
-    pub(crate) modified_by: String,
-    pub(crate) object_id: String,
-    pub(crate) object_class: String,
-    pub(crate) object_space: String,
+    pub(crate) class: &'a str,
+    pub(crate) space: &'a str,
+    pub(crate) created_by: &'a str,
+    pub(crate) modified_by: &'a str,
+    pub(crate) object_id: &'a str,
+    pub(crate) object_class: &'a str,
+    pub(crate) object_space: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) operations: Option<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) attributes: Option<T>,
-    pub(crate) collection: String,
-    pub(crate) attached_to: String,
-    pub(crate) attached_to_class: String
+    pub(crate) collection: &'a str,
+    pub(crate) attached_to: &'a str,
+    pub(crate) attached_to_class: &'a str
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,29 +171,27 @@ pub(crate) struct HulyAccount {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FindOptions {
-    pub(crate) projection: Option<HashMap<String, u8>>,
+    pub(crate) projection: Option<HashMap<&'static str, u8>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct FindParams {
+pub(crate) struct FindParams<'a> {
     #[serde(rename = "_class")]
-    pub(crate) class: String,
-    pub(crate) query: HashMap<String, String>,
+    pub(crate) class: &'static str,
+    pub(crate) query: HashMap<&'static str, &'a str>,
     pub(crate) options: Option<FindOptions>,
 }
 
-// TODO: this is a temporary value living not longer than a User from which it's produced
-// rewrite to use string refs with lifetime template args to avoid unnecessary cloning
-pub(crate) struct ApiAuth {
-    pub(crate) token: String,
-    pub(crate) workspace: String,
+pub(crate) struct ApiAuth<'a> {
+    pub(crate) token: &'a str,
+    pub(crate) workspace: &'a str,
 }
 
-impl TryFrom<&User> for ApiAuth {
+impl<'a> TryFrom<&'a User> for ApiAuth<'a> {
     type Error = Error;
 
-    fn try_from<'a>(user: &'a User) -> Result<Self, Self::Error> {
+    fn try_from(user: &'a User) -> Result<Self, Self::Error> {
         let Some(workspace) = &user.workspace else {
             return Err(Error::ApiError("no workspace".into()))
         };
@@ -185,8 +199,8 @@ impl TryFrom<&User> for ApiAuth {
             return Err(Error::ApiError("no token".into()))
         };
         Ok(Self {
-            token: token.clone(),
-            workspace: workspace.clone(),
+            token: token.as_str(),
+            workspace: workspace.as_str(),
         })
     }
 }
@@ -196,15 +210,15 @@ enum HttpMethod {
     Post,
 }
 
-async fn api_call<TResult, TParams>(
+async fn api_call<'a, TResult, TParams>(
     url: &str, 
     method: HttpMethod, 
     func: &str, 
-    auth: ApiAuth, 
-    params: Option<TParams>
+    auth: &ApiAuth<'a>, 
+    params: Option<&TParams>
 ) -> Result<TResult, Error> 
 where
-    TResult: for<'a> serde::de::Deserialize<'a>,
+    TResult: for<'de> serde::de::Deserialize<'de>,
     TParams: serde::Serialize,
 {
     let client = reqwest::Client::new();
@@ -252,8 +266,8 @@ where
     Ok(result.unwrap())
 }
 
-pub(crate) async fn find_all<T>(url: &str, auth: ApiAuth, params: FindParams) -> Result<T, Error> 
-where T: for<'a> serde::de::Deserialize<'a>,
+pub(crate) async fn find_all<'a, T>(url: &str, auth: &ApiAuth<'a>, params: &FindParams<'a>) -> Result<T, Error> 
+where T: for<'de> serde::de::Deserialize<'de>,
 {
     api_call(url, HttpMethod::Post, "find-all", auth, Some(params)).await
 }
@@ -262,11 +276,11 @@ where T: for<'a> serde::de::Deserialize<'a>,
 struct TxResult {
 }
 
-pub(crate) async fn tx<Tx>(url: &str, auth: ApiAuth, tx: Tx) -> Result<(), Error> 
+pub(crate) async fn tx<'a, Tx>(url: &str, auth: &ApiAuth<'a>, tx: &Tx) -> Result<(), Error> 
 where
     Tx: serde::Serialize,
 {
-    _ = api_call::<TxResult, Tx>(url, HttpMethod::Post, "tx", auth, Some(tx)).await?;
+    api_call::<TxResult, Tx>(url, HttpMethod::Post, "tx", auth, Some(tx)).await?;
     Ok(())
 }
 
@@ -283,14 +297,14 @@ struct GenerateId {
     class: String,
 }
 
-pub(crate) async fn generate_id(url: &str, auth: ApiAuth, class: &str) -> Result<String, Error> {
-    let p = Some(GenerateId { class: class.to_string() });
-    let id: GeneratedId = api_call(url, HttpMethod::Post, "generate-id", auth, p).await?;
+pub(crate) async fn generate_id<'u>(url: &str, auth: &ApiAuth<'u>, class: &str) -> Result<String, Error> {
+    let p = GenerateId { class: class.to_string() };
+    let id: GeneratedId = api_call(url, HttpMethod::Post, "generate-id", auth, Some(&p)).await?;
     Ok(id.id)
 }
 
-pub(crate) async fn get_account(url: &str, auth: ApiAuth) -> Result<HulyAccount, Error> {
-    let p: Option<FindParams> = None;
+pub(crate) async fn get_account<'u>(url: &str, auth: &ApiAuth<'u>) -> Result<HulyAccount, Error> {
+    let p: Option<&FindParams> = None;
     let account: HulyAccount = api_call(url, HttpMethod::Get, "account", auth, p).await?;
     Ok(account)
 }
