@@ -10,7 +10,7 @@ use super::HulyStore;
 use crate::api::{generate_id, tx, HulyEventCreateData, HulyEventTx, HulyEventUpdateData, Timestamp, 
     CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_TX_CREATE_DOC, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC, 
     SPACE_CALENDAR, SPACE_TX, ID_NOT_ATTACHED, COLLECTION_EVENTS};
-use crate::convert::{parse_to_utc_msec, parse_rrule_string, make_calendar_object};
+use crate::convert::{parse_to_utc_msec, parse_rrule_string};
 
 #[async_trait]
 impl CalendarStore for HulyStore {
@@ -87,8 +87,8 @@ impl CalendarStore for HulyStore {
     async fn get_object(&self, user: &User, _: &str, event_id: &str) -> Result<CalendarObject, Error> {
         tracing::debug!("GET_OBJECT user={}, ws={:?}, event={}", user.id, user.workspace, event_id);
         let mut cache = self.calendar_cache.lock().await;
-        let events = cache.get_event_ex(user, event_id).await?;
-        let cal_obj: CalendarObject = make_calendar_object(events)?;
+        let event = cache.get_event_ex(user, event_id).await?;
+        let cal_obj: CalendarObject = event.try_into()?;
         println!("*** RETURN\n{}", cal_obj.get_ics());
         Ok(cal_obj)
     }
