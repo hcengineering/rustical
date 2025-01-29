@@ -1,10 +1,12 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, SystemTime};
+use std::vec;
 use rustical_store::auth::User;
-use rustical_store::calendar::{self, CalendarObjectType};
+use rustical_store::calendar::CalendarObjectType;
 use rustical_store::{Calendar, Error};
-use crate::api::{find_all, FindOptions, FindParams, HulyCalendar, HulyEvent, HulyEventData};
+use crate::api::{find_all, FindOptions, FindParams, HulyEventSlim, HulyEventData, Timestamp};
 use crate::auth::get_workspaces;
 use crate::convert::calc_etag;
 
@@ -39,7 +41,7 @@ struct CachedCalendar {
     hash: i64,
     fetched_at: SystemTime,
     calendar_id: String,
-    events: Vec<HulyEvent>,
+    events: Vec<(String, Timestamp)>,
 }
 
 impl HulyCalendarCache {
@@ -150,8 +152,8 @@ impl HulyCalendarCache {
         } else {
             self.add_entry(user).await?
         };
-        Ok(entry.events.iter().map(|e| {
-            (e.event_id.clone(), calc_etag(&e.event_id, e.modified_on))
+        Ok(entry.events.iter().map(|(event_id, modified_on)| {
+            (event_id.clone(), calc_etag(event_id, *modified_on))
         }).collect())
     }
 
@@ -161,15 +163,17 @@ impl HulyCalendarCache {
         } else {
             self.add_entry(user).await?
         };
+        let calendar_id = entry.calendar_id.clone();
         let query = FindParams {
             class: "calendar:class:Event".to_string(),
             query: HashMap::from([
-                ("calendar".to_string(), entry.calendar_id.clone()),
+                ("calendar".to_string(), calendar_id.clone()),
                 ("eventId".to_string(), event_id.to_string()),
             ]),
             options: None,
         };
         let mut events = find_all::<Vec<HulyEventData>>(&self.api_url, user.try_into()?, query).await?;
+        //println!("*** HULY_EVENTS:\n{}", serde_json::to_string_pretty(&events).unwrap());
         if events.is_empty() {
             return Err(Error::NotFound)
         }
@@ -181,6 +185,65 @@ impl HulyCalendarCache {
         //println!("*** huly event: {}", serde_json::to_string_pretty(&event).unwrap());
         Ok(event)
     }
+
+    pub(crate) async fn get_event_ex(&mut self, user: &User, event_id: &str) -> Result<Vec<HulyEventData>, Error> {
+        println!("### GET_EVENT {}", event_id);
+        let entry = if let Some(entry) = self.get_entry(user)? {
+            entry
+        } else {
+            self.add_entry(user).await?
+        };
+        let calendar_id = entry.calendar_id.clone();
+        let query = FindParams {
+            class: "calendar:class:Event".to_string(),
+            query: HashMap::from([
+                ("calendar".to_string(), calendar_id.clone()),
+                ("eventId".to_string(), event_id.to_string()),
+            ]),
+            options: None,
+        };
+        let mut events = find_all::<Vec<HulyEventData>>(&self.api_url, user.try_into()?, query).await?;
+        //println!("*** HULY_EVENTS:\n{}", serde_json::to_string_pretty(&events).unwrap());
+        if events.is_empty() {
+            return Err(Error::NotFound)
+        }
+        if events.len() > 1 {
+            return Err(Error::InvalidData("multiple events found".into()))
+        }
+        let event = &mut events[0];
+        event.event_id = Some(event_id.to_string());
+        //println!("*** HULY_EVENT:\n{}", serde_json::to_string_pretty(&event).unwrap());
+
+        if event.class == "calendar:class:ReccuringEvent" {
+            let query = FindParams {
+                class: "calendar:class:ReccuringInstance".to_string(),
+                query: HashMap::from([
+                    ("calendar".to_string(), calendar_id.clone()),
+                    ("recurringEventId".to_string(), event_id.to_string()),
+                ]),
+                options: None,
+            };
+            let instances = find_all::<Vec<HulyEventData>>(&self.api_url, user.try_into()?, query).await?;
+            events.extend(instances.into_iter());
+            // for instance in &instances {
+            //     if instance.is_cancelled.unwrap_or(false) {
+            //         let event = &mut events[0];
+            //         if let Some(exdate) = event.exdate.as_mut() {
+            //             exdate.push(instance.date);
+            //         } else {
+            //             event.exdate = Some(vec![instance.date]);
+            //         }
+            //     } else {
+            //         let mut sub_event = instance.clone();
+            //         sub_event.event_id = Some(event_id.to_string());
+            //         events.push(sub_event);
+            //     }
+            // }
+        }
+
+        Ok(events)
+    }
+
 }
 
 impl CachedCalendar {
@@ -216,15 +279,34 @@ impl CachedCalendar {
                 projection: Some(HashMap::from([
                     ("eventId".to_string(), 1),
                     ("modifiedOn".to_string(), 1),
+                    ("recurringEventId".to_string(), 1),
                 ])),
             }),
         };
-        let events = find_all::<Vec<HulyEvent>>(api_url, user.try_into()?, query).await?;
+        let events = find_all::<Vec<HulyEventSlim>>(api_url, user.try_into()?, query).await?;
         // println!("*** huly events: {}", serde_json::to_string_pretty(&events).unwrap());
 
-        let hashed = events.iter().map(|e| (&e.event_id, e.modified_on)).collect::<Vec<_>>();
+        let mut event_dates = HashMap::new();
+        for event in &events {
+            if let Some(recurring_event_id) = &event.recurring_event_id {
+                match event_dates.entry(recurring_event_id.clone()) {
+                    Entry::Occupied(mut entry) => {
+                        if event.modified_on > *entry.get() {
+                            *entry.get_mut() = event.modified_on;
+                        }
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert(event.modified_on);
+                    }
+                }
+            } else {
+                event_dates.insert(event.event_id.clone(), event.modified_on);
+            }
+        }
+
+        let events = event_dates.into_iter().map(|(id, dt)| (id, dt)).collect::<Vec<_>>();
         let mut s = DefaultHasher::new();
-        hashed.hash(&mut s);
+        events.hash(&mut s);
         let hash = s.finish();
 
         Ok(Self {

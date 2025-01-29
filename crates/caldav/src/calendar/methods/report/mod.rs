@@ -33,6 +33,9 @@ pub async fn route_report_calendar<C: CalendarStore>(
     req: HttpRequest,
     cal_store: Data<C>,
 ) -> Result<impl Responder, Error> {
+    let req_path = req.path().to_string();
+    println!("\n### REPORT REQUEST {}\n{}\n", req_path, body);
+
     let (principal, cal_id) = path.into_inner();
     if principal != user.id {
         return Err(Error::Unauthorized);
@@ -40,7 +43,7 @@ pub async fn route_report_calendar<C: CalendarStore>(
 
     let request = ReportRequest::parse_str(&body)?;
 
-    Ok(match request.clone() {
+    let res = match request.clone() {
         ReportRequest::CalendarQuery(cal_query) => {
             handle_calendar_query(
                 cal_query,
@@ -74,7 +77,14 @@ pub async fn route_report_calendar<C: CalendarStore>(
             )
             .await?
         }
-    })
+    };
+
+    let mut output: Vec<_> = b"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".into();
+    let mut writer = quick_xml::Writer::new_with_indent(&mut output, b' ', 4);
+    rustical_xml::XmlSerializeRoot::serialize_root(&res, &mut writer).unwrap();
+    println!("\n### REPORT RESPONSE {}\n{}\n", req_path, String::from_utf8(output).unwrap());
+
+    Ok(res)
 }
 
 #[cfg(test)]
