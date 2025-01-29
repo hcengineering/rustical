@@ -127,11 +127,14 @@ impl CalendarStore for HulyStore {
 
     #[instrument]
     async fn delete_object(&self, user: &User, _: &str, event_id: &str, use_trashbin: bool) -> Result<(), Error> {
-        let account = get_account(user)?;
         tracing::debug!("DELETE_OBJECT user={}, ws={:?}, event_id={:?}, use_trashbin={}", user.id, user.workspace, event_id, use_trashbin);
+
+        let account = get_account(user)?;
+
         let mut cache = self.calendar_cache.lock().await;
+
         let old_event = cache.get_event(user, event_id).await?;
-        println!("*** OLD_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
+        println!("*** OLD_EVENT:\n{}", old_event.pretty_str());
 
         let auth = user.try_into()?;
         let tx_id = generate_id(cache.api_url(), &auth, "core:class:TxUpdateDoc").await?;
@@ -152,7 +155,7 @@ impl CalendarStore for HulyStore {
             attached_to_class: old_event.attached_to_class.as_str(),
         };
 
-        println!("*** REMOVE TX {}", serde_json::to_string_pretty(&remove_tx).unwrap());
+        println!("*** REMOVE TX {}", remove_tx.pretty_str());
 
         tx(cache.api_url(), &auth, &remove_tx).await?;
         cache.invalidate(user);
@@ -303,14 +306,14 @@ impl HulyStore {
             attached_to_class: old_event.attached_to_class.as_str(),
         };
 
-        println!("*** UPDATE_TX {}", serde_json::to_string_pretty(&update_tx).unwrap());
+        println!("*** UPDATE_TX:\n{}", update_tx.pretty_str());
         tx(api_url, &auth, &update_tx).await
     }
 
     async fn update_event(&self, user: &User, event_id: &str, event_obj: &EventObject) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
         let old_event = cache.get_event(user, event_id).await?;
-        println!("*** OLD_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
+        println!("*** OLD_EVENT:\n{}", old_event.pretty_str());
         self.update_event_raw(user, cache.api_url(), &old_event, event_obj).await?;
         cache.invalidate(user);
         Ok(())
@@ -325,21 +328,32 @@ impl HulyStore {
         tx_create_event(api_url, user, CLASS_RECURRING_INSTANCE, &data).await
     }
 
-    async fn update_recurring_instance(&self, user: &User, api_url: &str, old_event: &HulyEvent, event_obj: &EventObject) -> Result<(), Error> {
-        Ok(())
+    async fn update_recurring_instance(&self, user: &User, api_url: &str, cal_id: &str, old_event: &HulyEvent, event_obj: &EventObject) -> Result<(), Error> {
+        let original_start_time = from_ical_get_timestamp_required(&event_obj.event, "RECURRENCE-ID")?;
+        let old_instances = old_event.instances.as_ref()
+            .ok_or_else(|| Error::InvalidData("Empty recurring instances".into()))?;
+        let old_instance = old_instances.iter()
+            .find(|inst| inst.original_start_time.unwrap_or_default() == original_start_time);
+        if let Some(old_instance) = old_instance {
+            self.update_event_raw(user, api_url, old_instance, event_obj).await
+        } else {
+            let event_id = old_event.data.event_id.as_ref().
+                ok_or_else(|| Error::InvalidData("Empty event id".into()))?;
+            self.create_recurring_instance(user, api_url, cal_id, event_id.as_str(), event_obj).await
+        }
     }
 
     async fn update_recurring_event(&self, user: &User, event_id: &str, event_objs: &Vec<EventObject>) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
         let cal_id = cache.get_calendar_id(user).await?;
         let old_event = cache.get_event_ex(user, event_id).await?;
-        println!("*** OLD_RECURRING_EVENT:\n{}", serde_json::to_string_pretty(&old_event).unwrap());
+        println!("*** OLD_RECURRING_EVENT:\n{}", old_event.pretty_str());
         for event_obj in event_objs {
             if event_obj.event.get_property("RECURRENCE-ID").is_some() {
                 if old_event.instances.is_none() {
                     self.create_recurring_instance(user, cache.api_url(), cal_id.as_str(), event_id, event_obj).await?;
                 } else {
-                    self.update_recurring_instance(user, cache.api_url(), &old_event, event_obj).await?;
+                    self.update_recurring_instance(user, cache.api_url(), cal_id.as_str(), &old_event, event_obj).await?;
                 }
             } else {
                 self.update_event_raw(user, cache.api_url(), &old_event.data, event_obj).await?;
