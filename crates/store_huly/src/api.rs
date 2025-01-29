@@ -61,11 +61,23 @@ pub(crate) struct HulyEventData {
     pub(crate) original_start_time: Option<Timestamp>,
 }
 
+impl HulyEventData {
+    pub(crate) fn pretty_str(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HulyEvent {
     pub(crate) data: HulyEventData,
     pub(crate) instances: Option<Vec<HulyEventData>>,
+}
+
+impl HulyEvent {
+    pub(crate) fn pretty_str(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Eq, PartialEq, Clone)]
@@ -163,6 +175,15 @@ pub(crate) struct HulyEventTx<'a, T> {
     pub(crate) collection: &'a str,
     pub(crate) attached_to: &'a str,
     pub(crate) attached_to_class: &'a str
+}
+
+impl<'a, T> HulyEventTx<'a, T> 
+where
+    T: serde::Serialize,
+{
+    pub(crate) fn pretty_str(&'a self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
 }
 
 #[derive(Debug, Deserialize)]
