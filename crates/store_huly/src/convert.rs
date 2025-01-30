@@ -1,116 +1,21 @@
 use std::collections::HashMap;
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
-use chrono_tz::OffsetComponents;
 use rustical_store::{CalendarObject, Error};
 use ical::generator::{Emitter, IcalCalendarBuilder, IcalEvent, IcalEventBuilder};
 use ical::parser::Component;
-use ical::parser::ical::component::{IcalTimeZone, IcalTimeZoneTransition, IcalTimeZoneTransitionType};
+use ical::parser::ical::component::IcalTimeZone;
 use ical::property::Property;
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
-use crate::api::{HulyEvent, HulyEventData, HulyEventCreateData, RecurringRule, Timestamp};
+use crate::api::{HulyEvent, HulyEventData, HulyEventCreateData, Timestamp};
+use crate::convert_rrule::parse_rrule_string;
+use crate::convert_time::{format_utc_msec, from_ical_get_event_bounds, from_ical_get_exdate, from_ical_get_timezone};
 
 pub(crate) fn calc_etag(id: &String, modified_on: Timestamp) -> String {
     let mut hasher = Sha256::new();
     hasher.update(id);
     hasher.update(modified_on.to_string());
     format!("{:x}", hasher.finalize())
-}
-
-fn timestamp_to_utc(msec: Timestamp, name_hint: &str) -> Result<DateTime<Utc>, Error> {
-    let secs = msec / 1000;
-    let nsecs = ((msec - secs * 1000) * 1000) as u32;
-    let dt = Utc.timestamp_opt(secs, nsecs);
-    let chrono::offset::LocalResult::Single(utc) = dt else {
-        return Err(Error::InvalidData(format!("Invalid timestamp: {}", name_hint)))
-    };
-    Ok(utc)
-}
-
-fn format_utc_msec(msec: Timestamp, tz: &chrono_tz::Tz, all_day: bool, name_hint: &str) -> Result<String, Error> {
-    let utc = timestamp_to_utc(msec, name_hint)?;
-    if all_day {
-        return Ok(utc.format("%Y%m%d").to_string());
-    }
-    let tz_aware = utc.with_timezone(tz);
-    Ok(tz_aware.format(ical::generator::ICAL_DATE_FORMAT).to_string())
-}
-
-fn parse_to_utc_msec(time_str: &str, tz: &chrono_tz::Tz, name_hint: &str) -> Result<i64, Error> {
-    let local = chrono::NaiveDateTime::parse_from_str(time_str, ical::generator::ICAL_DATE_FORMAT);
-    if let Err(err) = local {
-        return Err(Error::InvalidData(format!("Invalid timestamp: {}: {}", name_hint, err)))
-    }
-    let local = local.unwrap();
-    let Some(tz_aware) = tz.from_local_datetime(&local).earliest() else {
-        return Err(Error::InvalidData(format!("Invalid timestamp: {}", name_hint)))
-    };
-    Ok(tz_aware.timestamp_millis())
-}
-
-struct TimezoneTransition {
-    utc: NaiveDateTime,
-    offset: Duration,
-    is_dst: bool,
-}
-
-fn get_timezone_transitions(tz: &chrono_tz::Tz, year: i32) -> Vec<TimezoneTransition> {
-    let start = Utc.with_ymd_and_hms(year, 1, 1, 0, 0, 0).unwrap();
-    let end = Utc.with_ymd_and_hms(year + 1, 1, 1, 0, 0, 0).unwrap();
-    let mut transitions = Vec::new();
-    let mut curr = start;
-    let mut prev_offset_secs = None;
-    while curr < end {
-        let utc = curr.naive_utc();
-        let offset = tz.offset_from_utc_datetime(&utc);
-        let offset_secs = i64::from(offset.fix().local_minus_utc());
-        if let Some(prev_offset) = prev_offset_secs {
-            if offset_secs != prev_offset {
-                transitions.push(TimezoneTransition{
-                    utc,
-                    offset: Duration::seconds(offset_secs),
-                    is_dst: !offset.dst_offset().is_zero(),
-                });
-                prev_offset_secs = Some(offset_secs);
-            }
-        } else {
-            prev_offset_secs = Some(offset_secs);
-        }
-        curr += Duration::hours(1);
-    }
-    transitions
-}
-
-fn add_timezone_transitions(ical_tz: &mut IcalTimeZone, transitions: &[TimezoneTransition]) {
-    let mut prev = &transitions[0];
-    for curr in transitions {
-        let mut transition = IcalTimeZoneTransition {
-            transition: if curr.is_dst {
-                IcalTimeZoneTransitionType::DAYLIGHT
-            } else {
-                IcalTimeZoneTransitionType::STANDARD
-            },
-            properties: Vec::new(),
-        };
-        transition.properties.push(Property {
-            name: "DTSTART".to_string(),
-            params: None,
-            value: Some(curr.utc.format("%Y%m%dT%H%M%SZ").to_string()),
-        });
-        transition.properties.push(Property {
-            name: "TZOFFSETFROM".to_string(),
-            params: None,
-            value: Some(format!("{:+05}", prev.offset.num_seconds() / 3600)),
-        });
-        transition.properties.push(Property {
-            name: "TZOFFSETTO".to_string(),
-            params: None,
-            value: Some(format!("{:+05}", curr.offset.num_seconds() / 3600)),
-        });
-        ical_tz.transitions.push(transition);
-        prev = curr;
-    }
 }
 
 fn make_ical_event(event: &HulyEventData, tz: &chrono_tz::Tz) -> Result<IcalEvent, Error> {
@@ -367,356 +272,9 @@ impl TryInto<CalendarObject> for HulyEventData {
     }
 }
 
-pub(crate) fn parse_rrule_string(rrules: &str) -> Result<Option<Vec<RecurringRule>>, Error> {
-    let rules = rrules.split('\n')
-        .filter(|s| !s.is_empty())
-        .map(RecurringRule::from_rrule_string)
-        .collect::<Result<Vec<_>, _>>();
-    if let Err(err) = rules {
-        return Err(Error::InvalidData(format!("Invalid RRULE: {}", err)));
-    }
-    let rules = rules.unwrap();
-    Ok(if rules.is_empty() {
-        None
-    } else {
-        Some(rules)
-    })
-}
-
-impl RecurringRule {
-    fn to_rrule_string(&self) -> Result<String, Error> {
-        let mut parts = vec![format!("FREQ={}", self.freq.to_uppercase())];
-        if let Some(end_date) = &self.end_date {
-            let end_date = timestamp_to_utc(*end_date, "rrule.enddate")?;
-            let end_date = end_date.format("%Y%m%dT%H%M%SZ").to_string();
-            parts.push(format!("UNTIL={}", end_date));
-        }
-        if let Some(count) = self.count {
-            parts.push(format!("COUNT={}", count));
-        }
-        if let Some(interval) = self.interval {
-            parts.push(format!("INTERVAL={}", interval));
-        }
-        if let Some(by_second) = &self.by_second {
-            parts.push(format!("BYSECOND={}", by_second.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_minute) = &self.by_minute {
-            parts.push(format!("BYMINUTE={}", by_minute.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_hour) = &self.by_hour {
-            parts.push(format!("BYHOUR={}", by_hour.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_day) = &self.by_day {
-            parts.push(format!("BYDAY={}", by_day.join(",")));
-        }
-        if let Some(by_month_day) = &self.by_month_day {
-            parts.push(format!("BYMONTHDAY={}", by_month_day.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_year_day) = &self.by_year_day {
-            parts.push(format!("BYYEARDAY={}", by_year_day.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_week_no) = &self.by_week_no {
-            parts.push(format!("BYWEEKNO={}", by_week_no.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_month) = &self.by_month {
-            parts.push(format!("BYMONTH={}", by_month.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_set_pos) = &self.by_set_pos {
-            parts.push(format!("BYSETPOS={}", by_set_pos.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(wkst) = &self.wkst {
-            parts.push(format!("WKST={}", wkst.join(",")));
-        }
-        Ok(parts.join(";"))
-    }
-
-    pub(crate) fn from_rrule_string(rrule: &str) -> Result<Self, String> {
-        let mut rule = RecurringRule::default();
-        for part in rrule.split(';') {
-            let mut kv = part.split('=');
-            let key = kv.next().ok_or("Invalid format")?;
-            let value = kv.next().ok_or("Invalid format")?;
-            match key.to_uppercase().as_str() {
-                "FREQ" => rule.freq = value.to_string(),
-                "UNTIL" => {
-                    let dt = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%SZ");
-                    if let Err(err) = dt {
-                        return Err(format!("Invalid date UNTIL: {}", err))
-                    }
-                    rule.end_date = Some(dt.unwrap().and_utc().timestamp_millis())
-                }
-                "COUNT" => {
-                    rule.count = Some(value.parse().map_err(|e| format!("Invalid COUNT: {}", e))?);
-                }
-                "INTERVAL" => {
-                    rule.interval = Some(value.parse().map_err(|e| format!("Invalid INTERVAL: {}", e))?);
-                }
-                "BYSECOND" => {
-                    rule.by_second = Some(value.split(',')
-                        .map(|s| s.parse::<u8>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYSECOND: {}", e))?);
-                }
-                "BYMINUTE" => {
-                    rule.by_minute = Some(value.split(',')
-                        .map(|s| s.parse::<u8>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYMINUTE: {}", e))?);
-                }
-                "BYHOUR" => {
-                    rule.by_hour = Some(value.split(',')
-                        .map(|s| s.parse::<u8>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYHOUR: {}", e))?);
-                }
-                "BYDAY" => {
-                    rule.by_day = Some(value.split(',')
-                        .map(|s| s.to_string())
-                        .collect());
-                }
-                "BYMONTHDAY" => {
-                    rule.by_month_day = Some(value.split(',')
-                        .map(|s| s.parse::<u8>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYMONTHDAY: {}", e))?);
-                }
-                "BYYEARDAY" => {
-                    rule.by_year_day = Some(value.split(',')
-                        .map(|s| s.parse::<u16>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYYEARDAY: {}", e))?);
-                }
-                "BYWEEKNO" => {
-                    rule.by_week_no = Some(value.split(',')
-                        .map(|s| s.parse::<i8>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYWEEKNO: {}", e))?);
-                }
-                "BYMONTH" => {
-                    rule.by_month = Some(value.split(',')
-                        .map(|s| s.parse::<u8>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYMONTH: {}", e))?);
-                }
-                "BYSETPOS" => {
-                    rule.by_set_pos = Some(value.split(',')
-                        .map(|s| s.parse::<i16>())
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| format!("Invalid BYSETPOS: {}", e))?);
-                }
-                "WKST" => {
-                    rule.wkst = Some(value.split(',')
-                        .map(|s| s.to_string())
-                        .collect());
-                }
-                _ => return Err(format!("Unknown part: {}", key))
-            }
-        }
-        if rule.freq.is_empty() {
-            return Err("FREQ is required".to_string());
-        }
-        Ok(rule)
-    }
-}
-
-pub fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint: &str) -> Result<(Option<Timestamp>, bool), Error> {
-    let Some(value) = &prop.value else {
-        return Err(Error::InvalidData(format!("Missing value: {}", prop_hint)));
-    };
-    let Some(params) = &prop.params else {
-        let utc = NaiveDateTime::parse_from_str(value.as_str(), "%Y%m%dT%H%M%SZ");
-        if let Err(err) = utc {
-            return Err(Error::InvalidData(format!("invalid utc date: {}: {}", prop_hint, err)));
-        }
-        let utc = utc.unwrap();
-        let ms = utc.and_utc().timestamp_millis();
-        return Ok((Some(ms), false));
-    };
-    for (param_name, param_values) in params {
-        match param_name.as_str() {
-            // params=Some([("VALUE", ["DATE"])]),
-            "VALUE" => {
-                if param_values.contains(&"DATE".to_string()) {
-                    let local = NaiveDate::parse_from_str(value.as_str(), "%Y%m%d");
-                    if let Err(err) = local {
-                        return Err(Error::InvalidData(format!("invalid date: {}: {}", prop_hint, err)));
-                    }
-                    let local = local.unwrap();
-                    let Some(dt) = local.and_hms_opt(0, 0, 0) else {
-                        return Err(Error::InvalidData(format!("invalid date-time: {}", prop_hint)));
-                    };
-                    let ms = dt.and_utc().timestamp_millis();
-                    return Ok((Some(ms), true));
-                }
-            },
-            // params=Some([("TZID", ["Asia/Novosibirsk"])]),
-            "TZID" => {
-                if param_values.is_empty() {
-                    return Err(Error::InvalidData(format!("timezone not set: {}", prop_hint)));
-                }
-                let tzid = param_values[0].as_str();
-                let tz = chrono_tz::Tz::from_str(tzid);
-                if let Err(err) = tz {
-                    return Err(Error::InvalidData(format!("invalid timezone: {}: {}", prop_hint, err)));
-                }
-                let tz = tz.unwrap();
-                let ms = parse_to_utc_msec(value.as_str(), &tz, prop_hint)?;
-                return Ok((Some(ms), false));
-            },
-            _ => {},
-        }
-    }
-    return Ok((None, false))
-}
-
-/// Parse duration string according to RFC5545 format.
-pub fn parse_duration(duration: &str) -> Result<chrono::Duration, Error> {
-    if !duration.starts_with('P') {
-        return Err(Error::InvalidData("Duration must start with P".to_string()));
-    }
-    let negative = duration.starts_with("-");
-    let duration = if negative { &duration[2..] } else { &duration[1..] };
-
-    let mut total = chrono::Duration::zero();
-    let mut in_time = false;
-    let mut number = String::new();
-
-    for c in duration.chars() {
-        match c {
-            'T' => {
-                in_time = true;
-                if !number.is_empty() {
-                    return Err(Error::InvalidData("Invalid duration format".to_string()));
-                }
-            }
-            'W' => {
-                if in_time || number.is_empty() {
-                    return Err(Error::InvalidData("Invalid week format".to_string()));
-                }
-                let weeks: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
-                total = total + chrono::Duration::weeks(weeks);
-                number.clear();
-            }
-            'D' => {
-                if in_time || number.is_empty() {
-                    return Err(Error::InvalidData("Invalid day format".to_string()));
-                }
-                let days: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
-                total = total + chrono::Duration::days(days);
-                number.clear();
-            }
-            'H' => {
-                if !in_time || number.is_empty() {
-                    return Err(Error::InvalidData("Invalid hour format".to_string()));
-                }
-                let hours: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
-                total = total + chrono::Duration::hours(hours);
-                number.clear();
-            }
-            'M' => {
-                if !in_time || number.is_empty() {
-                    return Err(Error::InvalidData("Invalid minute format".to_string()));
-                }
-                let minutes: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
-                total = total + chrono::Duration::minutes(minutes);
-                number.clear();
-            }
-            'S' => {
-                if !in_time || number.is_empty() {
-                    return Err(Error::InvalidData("Invalid second format".to_string()));
-                }
-                let seconds: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
-                total = total + chrono::Duration::seconds(seconds);
-                number.clear();
-            }
-            '0'..='9' => number.push(c),
-            _ => return Err(Error::InvalidData("Invalid character in duration".to_string())),
-        }
-    }
-
-    if !number.is_empty() {
-        return Err(Error::InvalidData("Incomplete duration format".to_string()));
-    }
-
-    Ok(if negative { -total } else { total })
-}
-
-pub fn from_ical_get_timestamps(event: &IcalEvent) -> Result<(Option<Timestamp>, Option<Timestamp>, bool), Error> {
-    let (start, all_day_1) = if let Some(prop) = event.get_property("DTSTART") {
-        from_ical_get_timestamp(prop, "DTSTART")?
-    } else {
-        (None, false)
-    };
-
-    // Try DTEND first, fall back to DURATION if DTEND is not present
-    let (end, all_day_2) = if let Some(prop) = event.get_property("DTEND") {
-        from_ical_get_timestamp(prop, "DTEND")?
-    } else if let Some(prop) = event.get_property("DURATION") {
-        let Some(duration_str) = &prop.value else {
-            return Err(Error::InvalidData("Missing DURATION value".to_string()));
-        };
-        let Some(start_ts) = start else {
-            return Err(Error::InvalidData("DURATION requires DTSTART".to_string()));
-        };
-        let duration = parse_duration(duration_str)?;
-        let end_ts = start_ts + duration.num_milliseconds();
-        (Some(end_ts), all_day_1)
-    } else {
-        (None, false)
-    };
-
-    let all_day = all_day_1 && all_day_2;
-    if all_day {
-        if let Some(utc_ms) = end {
-            return Ok((start, Some(utc_ms-1), true));
-        }
-    }
-    Ok((start, end, all_day))
-}
-
-pub(crate) fn from_ical_get_timestamp_required(event: &IcalEvent, prop_name: &str) -> Result<Timestamp, Error> {
-    let prop = event.get_property(prop_name)
-        .ok_or_else(|| Error::InvalidData(format!("Missing prop: {}", prop_name)))?;
-    let (ts, _) = from_ical_get_timestamp(prop, prop_name)?;
-    ts.ok_or_else(|| Error::InvalidData(format!("Missing field value: {}", prop_name)))
-}
-
-pub(crate) fn from_ical_get_exdate(ical_event: &EventObject) -> Result<Option<Vec<Timestamp>>, Error> {
-    let mut exdate = Vec::new();
-        for prop in &ical_event.event.properties {
-            if prop.name == "EXDATE" {
-                let (dt, _) = from_ical_get_timestamp(prop, "EXDATE")?;
-                if let Some(dt) = dt {
-                    exdate.push(dt);
-                }
-            }
-        }
-    Ok(if exdate.is_empty() {
-        None
-    } else {
-        Some(exdate)
-    })
-}
-
-pub(crate) fn from_ical_get_timezone(ical_event: &EventObject) -> Result<Option<String>, Error> {
-    if ical_event.timezones.len() > 1 {
-        return Err(Error::InvalidData("multiple timezones not supported".into()))
-    }
-    let tzids: Vec<String> = ical_event.timezones.keys().cloned().collect();
-    Ok(tzids.first().cloned())
-}
-
 impl HulyEventCreateData {
     pub(crate) fn new(cal_id: &str, event_id: &str, event_obj: &EventObject) -> Result<Self, Error> {
-        let (start, end, all_day) = from_ical_get_timestamps(&event_obj.event)?;
-        if start.is_none() {
-            return Err(Error::InvalidData("Missing value: DTSTART".into()));
-        }
-        let start = start.unwrap();
-        if end.is_none() {
-            return Err(Error::InvalidData("Missing value: DTEND".into()));
-        }
-        let end = end.unwrap();
+        let (date, due_date, all_day) = from_ical_get_event_bounds(&event_obj.event)?;
 
         let mut rules = None;
         if let Some(prop) = event_obj.event.get_property("RRULE") {
@@ -728,8 +286,8 @@ impl HulyEventCreateData {
         Ok(Self {
             calendar: cal_id.to_string(),
             event_id: event_id.to_string(),
-            date: start.clone(),
-            due_date: end,
+            date,
+            due_date,
             // TODO: handle markdown
             description: "".to_string(),
             // TODO: handle participants
@@ -758,9 +316,9 @@ impl HulyEventCreateData {
             // TODO: handle attachments
             time_zone: from_ical_get_timezone(event_obj)?,
             access: "owner".to_string(),
-            original_start_time: rules.is_some().then(|| start),
+            original_start_time: rules.is_some().then(|| date),
             rules,
-            exdate: from_ical_get_exdate(event_obj)?,
+            exdate: from_ical_get_exdate(&event_obj.event)?,
             recurring_event_id: None,
         })
     }

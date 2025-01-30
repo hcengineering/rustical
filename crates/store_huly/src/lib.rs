@@ -5,10 +5,10 @@ mod addressbook_store;
 mod auth;
 mod calendar_cache;
 mod calendar_store;
-pub mod convert;
+mod convert;
+mod convert_rrule;
+mod convert_time;
 mod subscription_store;
-
-pub use crate::convert::{from_ical_get_timestamps, parse_duration};
 
 #[derive(Debug)]
 pub struct HulyStore {
