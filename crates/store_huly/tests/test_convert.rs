@@ -123,4 +123,61 @@ fn test_from_ical_get_timestamps_with_duration() {
     assert_eq!(start.unwrap(), 1704106800000);
     assert_eq!(end.unwrap(), 1704103200000);
     assert!(!all_day);
+
+    // Test DTEND basic functionality
+    let mut event = IcalEvent::new();
+    let mut prop = Property::new();
+    prop.name = "DTSTART".to_string();
+    prop.value = Some("20240101T100000Z".to_string());
+    event.properties.push(prop);
+
+    let mut prop = Property::new();
+    prop.name = "DTEND".to_string();
+    prop.value = Some("20240101T120000Z".to_string());
+    event.properties.push(prop);
+
+    let (start, end, all_day) = from_ical_get_timestamps(&event).unwrap();
+    assert_eq!(start.unwrap(), 1704106800000);
+    assert_eq!(end.unwrap(), 1704114000000);
+    assert!(!all_day);
+
+    // Test DTEND takes precedence over DURATION
+    let mut event = IcalEvent::new();
+    let mut prop = Property::new();
+    prop.name = "DTSTART".to_string();
+    prop.value = Some("20240101T100000Z".to_string());
+    event.properties.push(prop);
+
+    let mut prop = Property::new();
+    prop.name = "DTEND".to_string();
+    prop.value = Some("20240101T120000Z".to_string());
+    event.properties.push(prop);
+
+    let mut prop = Property::new();
+    prop.name = "DURATION".to_string();
+    prop.value = Some("PT3H".to_string()); // Different duration than DTEND
+    event.properties.push(prop);
+
+    let (start, end, all_day) = from_ical_get_timestamps(&event).unwrap();
+    assert_eq!(start.unwrap(), 1704106800000);
+    assert_eq!(end.unwrap(), 1704114000000); // Should use DTEND value
+    assert!(!all_day);
+
+    // Test all-day event with DTEND
+    let mut event = IcalEvent::new();
+    let mut prop = Property::new();
+    prop.name = "DTSTART".to_string();
+    prop.value = Some("20240101".to_string());
+    prop.params = Some(vec![("VALUE".to_string(), vec!["DATE".to_string()])]);
+    event.properties.push(prop);
+
+    let mut prop = Property::new();
+    prop.name = "DTEND".to_string();
+    prop.value = Some("20240102".to_string());
+    prop.params = Some(vec![("VALUE".to_string(), vec!["DATE".to_string()])]);
+    event.properties.push(prop);
+
+    let (start, end, all_day) = from_ical_get_timestamps(&event).unwrap();
+    assert!(all_day);
+    assert_eq!(end.unwrap(), start.unwrap() + 86400000 - 1); // Should be adjusted by -1ms
 }
