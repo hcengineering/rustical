@@ -8,7 +8,7 @@ use ical::property::Property;
 use rustical_store::calendar::{parse_duration, CalendarObjectComponent, EventObject};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
-use crate::api::{HulyEvent, HulyEventData, HulyEventCreateData, Timestamp};
+use crate::api::{HulyEvent, HulyEventCreateData, HulyEventData, HulyEventUpdateData, Timestamp};
 use crate::convert_rrule::parse_rrule_string;
 use crate::convert_time::{
     format_utc_msec, format_duration_rfc5545, from_ical_get_event_bounds, from_ical_get_exdate, from_ical_get_timezone
@@ -48,6 +48,22 @@ pub(crate) fn from_ical_get_alarms(event: &IcalEvent) -> Result<Option<Vec<Times
         return Ok(None);
     }
     Ok(Some(alarms))
+}
+
+pub(crate) fn from_ical_get_participants(event: &IcalEvent) -> Result<Option<Vec<String>>, Error> {
+    let mut participants = Vec::new();
+    for prop in &event.properties {
+        if prop.name == "ATTENDEE" {
+            if let Some(value) = &prop.value {
+                participants.push(value.clone());
+            }
+        }
+    }
+    Ok(if participants.is_empty() {
+        None
+    } else {
+        Some(participants)
+    })
 }
 
 fn make_ical_event(event: &HulyEventData, tz: &chrono_tz::Tz) -> Result<IcalEvent, Error> {
@@ -114,6 +130,14 @@ fn make_ical_event(event: &HulyEventData, tz: &chrono_tz::Tz) -> Result<IcalEven
             alarm.properties.push(ical_property!("ACTION", "DISPLAY"));
             alarm.properties.push(ical_property!("DESCRIPTION", event.title.clone()));
             ical_event.alarms.push(alarm);
+        }
+    }
+
+    // TODO: handle event.participants
+    // TODO: add prop ORGANIZER (from user.id?)
+    if let Some(participants) = &event.external_participants {
+        for participant in participants {
+            ical_event.add_property(ical_property!("ATTENDEE", participant, ical_param!("ROLE", "REQ-PARTICIPANT")));
         }
     }
 
@@ -235,17 +259,26 @@ impl HulyEventCreateData {
             due_date,
             // TODO: handle markdown
             description: "".to_string(),
-            // TODO: handle participants
-            participants: None,
+            participants: Some(vec![]),
+            external_participants: from_ical_get_participants(&event_obj.event)?,
             reminders: from_ical_get_alarms(&event_obj.event)?,
+            // title: if let Some(prop) = event_obj.event.get_property("SUMMARY") {
+            //     if let Some(value) = &prop.value {
+            //         value.clone()
+            //     } else {
+            //         return Err(Error::InvalidData("Missing value: SUMMARY".into()));
+            //     }
+            // } else {
+            //     return Err(Error::InvalidData("Missing value: SUMMARY".into()));
+            // },
             title: if let Some(prop) = event_obj.event.get_property("SUMMARY") {
                 if let Some(value) = &prop.value {
                     value.clone()
                 } else {
-                    return Err(Error::InvalidData("Missing value: SUMMARY".into()));
+                    "".to_string()
                 }
             } else {
-                return Err(Error::InvalidData("Missing value: SUMMARY".into()));
+                "".to_string()
             },
             location: if let Some(prop) = event_obj.event.get_property("LOCATION") {
                 if let Some(value) = &prop.value {
@@ -265,5 +298,132 @@ impl HulyEventCreateData {
             exdate: from_ical_get_exdate(&event_obj.event)?,
             recurring_event_id: None,
         })
+    }
+}
+
+impl HulyEventUpdateData {
+    pub(crate) fn new(old_event: &HulyEventData, event_obj: &EventObject) -> Result<Option<Self>, Error> {
+        let mut update_data = HulyEventUpdateData::default();
+        //let mut update_count = 0;
+        let mut updates = vec![];
+        if let Some(prop) = event_obj.event.get_property("SUMMARY") {
+            if let Some(value) = &prop.value {
+                if *value != old_event.title {
+                    update_data.title = Some(value.clone());
+                    updates.push("title");
+                    //update_count += 1;
+                }
+            }
+        }
+        // TODO: handle markdown
+        // if let Some(prop) = ical_event.get_property("DESCRIPTION") {
+        //     if let Some(value) = &prop.value {
+        //         if *value != old_event.description {
+        //             updates.description = Some(value.clone());
+        //             update_count += 1;
+        //         }
+        //     }
+        // }
+        if let Some(prop) = event_obj.event.get_property("LOCATION") {
+            if let Some(value) = &prop.value {
+                if let Some(old_value) = &old_event.location {
+                    if value != old_value {
+                        update_data.location = Some(value.to_string());
+                        updates.push("location");
+                        //update_count += 1;
+                    }
+                } else {
+                    update_data.location = Some(value.to_string());
+                    updates.push("location");
+                    //update_count += 1;
+                }
+            }
+        }
+        let (date, due_date, all_day) = from_ical_get_event_bounds(&event_obj.event)?;
+        if date != old_event.date {
+            update_data.date = Some(date);
+            updates.push("date");
+            //update_count += 1;
+        }
+        if due_date != old_event.due_date {
+            update_data.due_date = Some(due_date);
+            updates.push("due_date");
+            //update_count += 1;
+        }
+        if all_day != old_event.all_day {
+            update_data.all_day = Some(all_day);
+            updates.push("all_day");
+            //update_count += 1;
+        }
+        let reminders = from_ical_get_alarms(&event_obj.event)?;
+        if reminders != old_event.reminders {
+            update_data.reminders = reminders;
+            updates.push("reminders");
+            //update_count += 1;
+        }
+
+        // There is no direct way in Huly to change event recurrency
+        // ReccuringEvent is a different object class and must be recreated
+        let is_old_recurrent = old_event.rules.as_ref().and_then(|r| Some(!r.is_empty())).unwrap_or(false);
+        if let Some(prop) = event_obj.event.get_property("RRULE") {
+            if let Some(value) = &prop.value {
+                if !is_old_recurrent {
+                    return Err(Error::InvalidData("Unable change event recurrency".into()));
+                }
+                let rules = parse_rrule_string(value.as_str())?;
+                if old_event.rules != rules {
+                    update_data.rules = rules;
+                    updates.push("rules");
+                    //update_count += 1;
+                }
+            } else if is_old_recurrent {
+                return Err(Error::InvalidData("Unable change event recurrency".into()));
+            }
+        } else if is_old_recurrent {
+            return Err(Error::InvalidData("Unable change event recurrency".into()));
+        }
+        if is_old_recurrent {
+            let exdate = from_ical_get_exdate(&event_obj.event)?;
+            if old_event.exdate != exdate {
+                update_data.exdate = exdate;
+                updates.push("exdate");
+                //update_count += 1;
+            }
+        }
+
+        let time_zone = from_ical_get_timezone(event_obj)?;
+        if let Some(time_zone) = time_zone {
+            if let Some(old_time_zone) = &old_event.time_zone {
+                if &time_zone != old_time_zone {
+                    update_data.time_zone = Some(time_zone);
+                    updates.push("time_zone");
+                    //update_count += 1;
+                }
+            } else {
+                update_data.time_zone = Some(time_zone);
+                updates.push("time_zone");
+                //update_count += 1;
+            }
+        } else if old_event.time_zone.is_some() {
+            update_data.time_zone = None;
+            updates.push("time_zone");
+            //update_count += 1;
+        }
+
+        let participants = from_ical_get_participants(&event_obj.event)?;
+        if participants != old_event.external_participants {
+            update_data.external_participants = participants;
+            updates.push("external_participants");
+            //update_count += 1;
+        }
+
+        // if update_count == 0 {
+        //     return Ok(None);
+        // }
+        if updates.is_empty() {
+            return Ok(None);
+        }
+        println!("#### UPDATED_PROPS: {:?}", updates);
+        Ok(Some(update_data))
     }
 }
