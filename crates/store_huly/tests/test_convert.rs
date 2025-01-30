@@ -1,5 +1,6 @@
-use rustical_store_huly::convert::from_ical_get_timestamp;
+use rustical_store_huly::convert::{from_ical_get_timestamp, from_ical_get_timestamps, parse_duration};
 use ical::property::Property;
+use ical::Event as IcalEvent;
 
 #[test]
 fn test_from_ical_get_timestamp_basic() {
@@ -60,4 +61,66 @@ fn test_from_ical_get_timestamp_errors() {
     let mut params = vec![("VALUE".to_string(), vec!["DATE".to_string()])];
     prop.params = Some(params);
     assert!(from_ical_get_timestamp(&prop, "test").is_err());
+}
+#[test]
+fn test_duration_parsing() {
+    assert_eq!(parse_duration("P1W").unwrap(), chrono::Duration::weeks(1));
+    assert_eq!(parse_duration("P1D").unwrap(), chrono::Duration::days(1));
+    assert_eq!(parse_duration("PT1H").unwrap(), chrono::Duration::hours(1));
+    assert_eq!(parse_duration("P1DT2H").unwrap(), chrono::Duration::days(1) + chrono::Duration::hours(2));
+    assert_eq!(parse_duration("-P1D").unwrap(), -chrono::Duration::days(1));
+    assert_eq!(parse_duration("PT1H30M").unwrap(), chrono::Duration::hours(1) + chrono::Duration::minutes(30));
+    assert_eq!(parse_duration("P1DT1H1M1S").unwrap(),
+        chrono::Duration::days(1) + chrono::Duration::hours(1) +
+        chrono::Duration::minutes(1) + chrono::Duration::seconds(1));
+
+    assert!(parse_duration("1D").is_err());
+    assert!(parse_duration("PT").is_err());
+    assert!(parse_duration("P1H").is_err());
+    assert!(parse_duration("PTT1H").is_err());
+    assert!(parse_duration("P-1D").is_err());
+    assert!(parse_duration("P1.5D").is_err());
+}
+
+#[test]
+fn test_from_ical_get_timestamps_with_duration() {
+    let mut event = IcalEvent::new();
+
+    let mut prop = Property::new();
+    prop.name = "DTSTART".to_string();
+    prop.value = Some("20240101T100000Z".to_string());
+    event.properties.push(prop);
+
+    let mut prop = Property::new();
+    prop.name = "DURATION".to_string();
+    prop.value = Some("PT2H".to_string());
+    event.properties.push(prop);
+
+    let (start, end, all_day) = from_ical_get_timestamps(&event).unwrap();
+    assert_eq!(start.unwrap(), 1704106800000);
+    assert_eq!(end.unwrap(), 1704114000000);
+    assert!(!all_day);
+
+    let mut event = IcalEvent::new();
+    let mut prop = Property::new();
+    prop.name = "DURATION".to_string();
+    prop.value = Some("PT2H".to_string());
+    event.properties.push(prop);
+    assert!(from_ical_get_timestamps(&event).is_err());
+
+    let mut event = IcalEvent::new();
+    let mut prop = Property::new();
+    prop.name = "DTSTART".to_string();
+    prop.value = Some("20240101T100000Z".to_string());
+    event.properties.push(prop);
+
+    let mut prop = Property::new();
+    prop.name = "DURATION".to_string();
+    prop.value = Some("-PT1H".to_string());
+    event.properties.push(prop);
+
+    let (start, end, all_day) = from_ical_get_timestamps(&event).unwrap();
+    assert_eq!(start.unwrap(), 1704106800000);
+    assert_eq!(end.unwrap(), 1704103200000);
+    assert!(!all_day);
 }

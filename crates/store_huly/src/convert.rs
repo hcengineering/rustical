@@ -569,26 +569,105 @@ pub fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint: &str)
     return Ok((None, false))
 }
 
+/// Parse duration string according to RFC5545 format.
+fn parse_duration(duration: &str) -> Result<chrono::Duration, Error> {
+    if !duration.starts_with('P') {
+        return Err(Error::InvalidData("Duration must start with P".to_string()));
+    }
+    let negative = duration.starts_with("-");
+    let duration = if negative { &duration[2..] } else { &duration[1..] };
+
+    let mut total = chrono::Duration::zero();
+    let mut in_time = false;
+    let mut number = String::new();
+
+    for c in duration.chars() {
+        match c {
+            'T' => {
+                in_time = true;
+                if !number.is_empty() {
+                    return Err(Error::InvalidData("Invalid duration format".to_string()));
+                }
+            }
+            'W' => {
+                if in_time || number.is_empty() {
+                    return Err(Error::InvalidData("Invalid week format".to_string()));
+                }
+                let weeks: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
+                total = total + chrono::Duration::weeks(weeks);
+                number.clear();
+            }
+            'D' => {
+                if in_time || number.is_empty() {
+                    return Err(Error::InvalidData("Invalid day format".to_string()));
+                }
+                let days: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
+                total = total + chrono::Duration::days(days);
+                number.clear();
+            }
+            'H' => {
+                if !in_time || number.is_empty() {
+                    return Err(Error::InvalidData("Invalid hour format".to_string()));
+                }
+                let hours: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
+                total = total + chrono::Duration::hours(hours);
+                number.clear();
+            }
+            'M' => {
+                if !in_time || number.is_empty() {
+                    return Err(Error::InvalidData("Invalid minute format".to_string()));
+                }
+                let minutes: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
+                total = total + chrono::Duration::minutes(minutes);
+                number.clear();
+            }
+            'S' => {
+                if !in_time || number.is_empty() {
+                    return Err(Error::InvalidData("Invalid second format".to_string()));
+                }
+                let seconds: i64 = number.parse().map_err(|_| Error::InvalidData("Invalid number".to_string()))?;
+                total = total + chrono::Duration::seconds(seconds);
+                number.clear();
+            }
+            '0'..='9' => number.push(c),
+            _ => return Err(Error::InvalidData("Invalid character in duration".to_string())),
+        }
+    }
+
+    if !number.is_empty() {
+        return Err(Error::InvalidData("Incomplete duration format".to_string()));
+    }
+
+    Ok(if negative { -total } else { total })
+}
+
 pub(crate) fn from_ical_get_timestamps(event: &IcalEvent) -> Result<(Option<Timestamp>, Option<Timestamp>, bool), Error> {
     let (start, all_day_1) = if let Some(prop) = event.get_property("DTSTART") {
         from_ical_get_timestamp(prop, "DTSTART")?
     } else {
         (None, false)
     };
+
+    // Try DTEND first, fall back to DURATION if DTEND is not present
     let (end, all_day_2) = if let Some(prop) = event.get_property("DTEND") {
         from_ical_get_timestamp(prop, "DTEND")?
+    } else if let Some(prop) = event.get_property("DURATION") {
+        let Some(duration_str) = &prop.value else {
+            return Err(Error::InvalidData("Missing DURATION value".to_string()));
+        };
+        let Some(start_ts) = start else {
+            return Err(Error::InvalidData("DURATION requires DTSTART".to_string()));
+        };
+        let duration = parse_duration(duration_str)?;
+        let end_ts = start_ts + duration.num_milliseconds();
+        (Some(end_ts), all_day_1)
     } else {
         (None, false)
     };
-    // TODO: handle DURATION property
-    // RFC5545: In a "VEVENT" calendar component the property may be
-    // used to specify a duration of the event, instead of an explicit end DATE-TIME
+
     let all_day = all_day_1 && all_day_2;
     if all_day {
         if let Some(utc_ms) = end {
-            // Huly defines all-day event as date={start_day}{00:00:00} due_date={end_day}{23:59:59:999}
-            // While CaldDav clients sends DTEND={end_day+1}{no time part}
-            // Shifting end date by 1 ms, we switch to the last ms of the prev day
             return Ok((start, Some(utc_ms-1), true));
         }
     }
