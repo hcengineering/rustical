@@ -32,14 +32,8 @@ impl RecurringRule {
         if let Some(interval) = self.interval {
             parts.push(format!("INTERVAL={}", interval));
         }
-        if let Some(by_second) = &self.by_second {
-            parts.push(format!("BYSECOND={}", by_second.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_minute) = &self.by_minute {
-            parts.push(format!("BYMINUTE={}", by_minute.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
-        }
-        if let Some(by_hour) = &self.by_hour {
-            parts.push(format!("BYHOUR={}", by_hour.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        if let Some(by_month) = &self.by_month {
+            parts.push(format!("BYMONTH={}", by_month.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
         }
         if let Some(by_day) = &self.by_day {
             parts.push(format!("BYDAY={}", by_day.join(",")));
@@ -53,8 +47,14 @@ impl RecurringRule {
         if let Some(by_week_no) = &self.by_week_no {
             parts.push(format!("BYWEEKNO={}", by_week_no.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
         }
-        if let Some(by_month) = &self.by_month {
-            parts.push(format!("BYMONTH={}", by_month.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        if let Some(by_hour) = &self.by_hour {
+            parts.push(format!("BYHOUR={}", by_hour.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_minute) = &self.by_minute {
+            parts.push(format!("BYMINUTE={}", by_minute.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
+        }
+        if let Some(by_second) = &self.by_second {
+            parts.push(format!("BYSECOND={}", by_second.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
         }
         if let Some(by_set_pos) = &self.by_set_pos {
             parts.push(format!("BYSETPOS={}", by_set_pos.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")));
@@ -151,5 +151,73 @@ impl RecurringRule {
             return Err("FREQ is required".to_string());
         }
         Ok(rule)
+    }
+}
+
+#[test]
+fn test_parse_rrule_string() {
+    let rrule = "FREQ=DAILY;COUNT=10";
+    let result = parse_rrule_string(rrule).unwrap().unwrap();
+    assert_eq!(result.len(), 1);
+    let rule = &result[0];
+    assert_eq!(rule.freq, "DAILY");
+    assert_eq!(rule.count, Some(10));
+}
+
+#[test]
+fn test_parse_rrule_string_all_frequencies() {
+    let frequencies = ["SECONDLY", "MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"];
+    for freq in frequencies {
+        let rrule = format!("FREQ={}", freq);
+        let result = parse_rrule_string(&rrule).unwrap().unwrap();
+        assert_eq!(result[0].freq, freq);
+    }
+}
+
+#[test]
+fn test_parse_rrule_string_complex_rrule() {
+    let rrule = "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1";
+    let result = parse_rrule_string(rrule).unwrap().unwrap();
+    let rule = &result[0];
+    assert_eq!(rule.freq, "MONTHLY");
+    assert_eq!(rule.by_day, Some(vec!["MO".into(), "TU".into(), "WE".into(), "TH".into(), "FR".into()]));
+    assert_eq!(rule.by_set_pos, Some(vec![-1]));
+}
+
+#[test]
+fn test_to_rrule_string() {
+    let rule = RecurringRule {
+        freq: "DAILY".into(),
+        count: Some(10),
+        ..Default::default()
+    };
+    let result = rule.to_rrule_string().unwrap();
+    assert_eq!(result, "FREQ=DAILY;COUNT=10");
+}
+
+#[test]
+fn test_to_rrule_string_complex_rrule() {
+    let rule = RecurringRule {
+        freq: "MONTHLY".into(),
+        by_day: Some(vec!["MO".into(), "TU".into(), "WE".into(), "TH".into(), "FR".into()]),
+        by_set_pos: Some(vec![-1]),
+        ..Default::default()
+    };
+    let result = rule.to_rrule_string().unwrap();
+    assert_eq!(result, "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1");
+}
+
+#[test]
+fn test_roundtrip() {
+    let cases = [
+        "FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+        "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR",
+        "FREQ=DAILY;COUNT=10",
+    ];
+    for case in cases {
+        let parsed = parse_rrule_string(case).unwrap().unwrap();
+        let formatted = parsed[0].to_rrule_string().unwrap();
+        assert_eq!(case, formatted);
     }
 }
