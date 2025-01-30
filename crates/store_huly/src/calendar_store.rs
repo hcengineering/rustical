@@ -6,15 +6,12 @@ use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use rustical_store::{auth::User, Calendar, CalendarObject, CalendarStore, Error};
 use super::HulyStore;
 use crate::api::{
-    generate_id, tx, tx_create_event, HulyEvent, HulyEventData, HulyEventCreateData, HulyEventTx, HulyEventUpdateData,
-    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC, SPACE_TX,
+    generate_id, tx_create_event, tx_delete_event, tx_update_event, HulyEvent, HulyEventData, HulyEventCreateData, HulyEventUpdateData,
+    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE,
 };
+use crate::convert::from_ical_get_alarms;
 use crate::convert_rrule::parse_rrule_string;
 use crate::convert_time::{from_ical_get_event_bounds, from_ical_get_timestamp_required, from_ical_get_exdate, from_ical_get_timezone};
-
-fn get_account<'a>(user: &'a User) -> Result<&'a str, Error> {
-    user.account.as_ref().map(|s| s.as_str()).ok_or(Error::InvalidData("Missing user account id".into()))
-}
 
 #[async_trait]
 impl CalendarStore for HulyStore {
@@ -91,7 +88,7 @@ impl CalendarStore for HulyStore {
     async fn get_object(&self, user: &User, _: &str, event_id: &str) -> Result<CalendarObject, Error> {
         tracing::debug!("GET_OBJECT user={}, ws={:?}, event={}", user.id, user.workspace, event_id);
         let mut cache = self.calendar_cache.lock().await;
-        let event = cache.get_event_ex(user, event_id).await?;
+        let event = cache.get_event(user, event_id, true).await?;
         let cal_obj: CalendarObject = event.try_into()?;
         println!("*** RETURN:\n{}", cal_obj.get_ics());
         Ok(cal_obj)
@@ -125,38 +122,13 @@ impl CalendarStore for HulyStore {
     #[instrument]
     async fn delete_object(&self, user: &User, _: &str, event_id: &str, use_trashbin: bool) -> Result<(), Error> {
         tracing::debug!("DELETE_OBJECT user={}, ws={:?}, event_id={:?}, use_trashbin={}", user.id, user.workspace, event_id, use_trashbin);
-
-        let account = get_account(user)?;
-
         let mut cache = self.calendar_cache.lock().await;
-
-        let old_event = cache.get_event(user, event_id).await?;
-        println!("*** OLD_EVENT:\n{}", old_event.pretty_str());
-
-        let auth = user.try_into()?;
-        let tx_id = generate_id(cache.api_url(), &auth, "core:class:TxUpdateDoc").await?;
-
-        let remove_tx = HulyEventTx::<()> {
-            id: tx_id,
-            class: CLASS_TX_REMOVE_DOC,
-            space: SPACE_TX,
-            modified_by: account,
-            created_by: account,
-            object_id: old_event.id.as_str(),
-            object_class: old_event.class.as_str(),
-            object_space: old_event.space.as_str(),
-            operations: None,
-            attributes: None,
-            collection: old_event.collection.as_str(),
-            attached_to: old_event.attached_to.as_str(),
-            attached_to_class: old_event.attached_to_class.as_str(),
-        };
-
-        println!("*** REMOVE TX {}", remove_tx.pretty_str());
-
-        tx(cache.api_url(), &auth, &remove_tx).await?;
+        let old_event = cache.get_event(user, event_id, true).await?;
+        tx_delete_event(cache.api_url(), user, &old_event.data).await?;
+        for instance in old_event.instances.as_ref().unwrap_or(&vec![]) {
+            tx_delete_event(cache.api_url(), user, instance).await?;
+        }
         cache.invalidate(user);
-
         Ok(())
     }
 
@@ -184,7 +156,6 @@ impl HulyStore {
     }
 
     async fn update_event_raw(&self, user: &User, api_url: &str, old_event: &HulyEventData, event_obj: &EventObject) -> Result<(), Error> {
-        let account = get_account(user)?;
         let mut update_data = HulyEventUpdateData::default();
         let mut update_count = 0;
         if let Some(prop) = event_obj.event.get_property("SUMMARY") {
@@ -230,10 +201,15 @@ impl HulyStore {
             update_data.all_day = Some(all_day);
             update_count += 1;
         }
+        let reminders = from_ical_get_alarms(&event_obj.event)?;
+        if reminders != old_event.reminders {
+            update_data.reminders = reminders;
+            update_count += 1;
+        }
 
         // There is no direct way in Huly to change event recurrency
         // ReccuringEvent is a different object class and must be recreated
-        let is_old_recurrent = old_event.rules.is_some();
+        let is_old_recurrent = old_event.rules.as_ref().and_then(|r| Some(!r.is_empty())).unwrap_or(false);
         if let Some(prop) = event_obj.event.get_property("RRULE") {
             if let Some(value) = &prop.value {
                 if !is_old_recurrent {
@@ -280,34 +256,14 @@ impl HulyStore {
             return Ok(());
         }
 
-        let auth = user.try_into()?;
-        let tx_id = generate_id(api_url, &auth, CLASS_TX_UPDATE_DOC).await?;
-
-        let update_tx = HulyEventTx {
-            id: tx_id,
-            class: CLASS_TX_UPDATE_DOC,
-            space: SPACE_TX,
-            modified_by: account,
-            created_by: account,
-            object_id: old_event.id.as_str(),
-            object_class: old_event.class.as_str(),
-            object_space: old_event.space.as_str(),
-            operations: Some(update_data),
-            attributes: None,
-            collection: old_event.collection.as_str(),
-            attached_to: old_event.attached_to.as_str(),
-            attached_to_class: old_event.attached_to_class.as_str(),
-        };
-
-        println!("*** UPDATE_TX:\n{}", update_tx.pretty_str());
-        tx(api_url, &auth, &update_tx).await
+        tx_update_event(api_url, user, old_event, &update_data).await
     }
 
     async fn update_event(&self, user: &User, event_id: &str, event_obj: &EventObject) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
-        let old_event = cache.get_event(user, event_id).await?;
+        let old_event = cache.get_event(user, event_id, false).await?;
         println!("*** OLD_EVENT:\n{}", old_event.pretty_str());
-        self.update_event_raw(user, cache.api_url(), &old_event, event_obj).await?;
+        self.update_event_raw(user, cache.api_url(), &old_event.data, event_obj).await?;
         cache.invalidate(user);
         Ok(())
     }
@@ -339,7 +295,7 @@ impl HulyStore {
     async fn update_recurring_event(&self, user: &User, event_id: &str, event_objs: &Vec<EventObject>) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
         let cal_id = cache.get_calendar_id(user).await?;
-        let old_event = cache.get_event_ex(user, event_id).await?;
+        let old_event = cache.get_event(user, event_id, true).await?;
         println!("*** OLD_RECURRING_EVENT:\n{}", old_event.pretty_str());
         for event_obj in event_objs {
             if event_obj.event.get_property("RECURRENCE-ID").is_some() {

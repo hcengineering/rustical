@@ -376,3 +376,56 @@ fn add_timezone_transitions(ical_tz: &mut IcalTimeZone, transitions: &[TimezoneT
     }
 }
 */
+
+pub(crate) fn format_duration_rfc5545(milliseconds: i64) -> String {
+    let mut result = String::from("P");
+
+    if milliseconds < 0 {
+        result.insert(0, '-');
+    }
+
+    let milliseconds = milliseconds.abs();
+    let seconds = milliseconds / 1000;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+    let mut has_t = false;
+
+    let hours_remainder = hours % 24;
+    let minutes_remainder = minutes % 60;
+    let seconds_remainder = seconds % 60;
+
+    if days > 0 {
+        result.push_str(&format!("{}D", days));
+    }
+    if hours_remainder > 0 {
+        if !has_t {
+            result.push_str("T");
+            has_t = true;
+        }
+        result.push_str(&format!("{}H", hours_remainder));
+    }
+    if minutes_remainder > 0 {
+        if !has_t {
+            result.push_str("T");
+            has_t = true;
+        }
+        result.push_str(&format!("{}M", minutes_remainder));
+    }
+    if seconds_remainder > 0 || (days == 0 && hours_remainder == 0 && minutes_remainder == 0) {
+        if !has_t {
+            result.push_str("T");
+        }
+        result.push_str(&format!("{}S", seconds_remainder));
+    }
+    result
+}
+
+#[test]
+fn test_format_duration_rfc5545() {
+    assert_eq!(format_duration_rfc5545(3661000), "PT1H1M1S");
+    assert_eq!(format_duration_rfc5545(86400000), "P1D");
+    assert_eq!(format_duration_rfc5545(86401000), "P1DT1S");
+    assert_eq!(format_duration_rfc5545(-3600000), "-PT1H");
+    assert_eq!(format_duration_rfc5545(0), "PT0S");
+}
