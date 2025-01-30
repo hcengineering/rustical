@@ -8,6 +8,8 @@ mod calendar_store;
 pub mod convert;
 mod subscription_store;
 
+pub use crate::convert::{from_ical_get_timestamps, parse_duration};
+
 #[derive(Debug)]
 pub struct HulyStore {
     pub(crate) calendar_cache: tokio::sync::Mutex<HulyCalendarCache>,

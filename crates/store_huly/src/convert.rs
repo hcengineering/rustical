@@ -570,7 +570,7 @@ pub fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint: &str)
 }
 
 /// Parse duration string according to RFC5545 format.
-fn parse_duration(duration: &str) -> Result<chrono::Duration, Error> {
+pub fn parse_duration(duration: &str) -> Result<chrono::Duration, Error> {
     if !duration.starts_with('P') {
         return Err(Error::InvalidData("Duration must start with P".to_string()));
     }
@@ -641,7 +641,7 @@ fn parse_duration(duration: &str) -> Result<chrono::Duration, Error> {
     Ok(if negative { -total } else { total })
 }
 
-pub(crate) fn from_ical_get_timestamps(event: &IcalEvent) -> Result<(Option<Timestamp>, Option<Timestamp>, bool), Error> {
+pub fn from_ical_get_timestamps(event: &IcalEvent) -> Result<(Option<Timestamp>, Option<Timestamp>, bool), Error> {
     let (start, all_day_1) = if let Some(prop) = event.get_property("DTSTART") {
         from_ical_get_timestamp(prop, "DTSTART")?
     } else {
