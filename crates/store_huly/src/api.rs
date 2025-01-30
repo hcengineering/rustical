@@ -53,6 +53,7 @@ pub(crate) struct HulyEventData {
     pub(crate) date: Timestamp,
     pub(crate) due_date: Timestamp,
     pub(crate) participants: Vec<String>,
+    pub(crate) external_participants: Option<Vec<String>>,
     pub(crate) reminders: Option<Vec<Timestamp>>,
     pub(crate) time_zone: Option<String>,
     pub(crate) rules: Option<Vec<RecurringRule>>,
@@ -130,6 +131,8 @@ pub(crate) struct HulyEventUpdateData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) participants: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) external_participants: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reminders: Option<Vec<Timestamp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) time_zone: Option<String>,
@@ -144,20 +147,21 @@ pub(crate) struct HulyEventUpdateData {
 pub(crate) struct HulyEventCreateData {
     pub(crate) calendar: String,
     pub(crate) event_id: String,
-    pub(crate) date: Timestamp,
-    pub(crate) due_date: Timestamp,
-    pub(crate) description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) participants: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) reminders: Option<Vec<Timestamp>>,
     pub(crate) title: String,
+    pub(crate) description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) location: Option<String>,
     pub(crate) all_day: bool,
+    pub(crate) date: Timestamp,
+    pub(crate) due_date: Timestamp,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) participants: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) external_participants: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reminders: Option<Vec<Timestamp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) time_zone: Option<String>,
-    pub(crate) access: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) rules: Option<Vec<RecurringRule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +170,7 @@ pub(crate) struct HulyEventCreateData {
     pub(crate) original_start_time: Option<Timestamp>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) recurring_event_id: Option<String>,
+    pub(crate) access: String,
 }
 
 #[derive(Debug, Serialize)]
