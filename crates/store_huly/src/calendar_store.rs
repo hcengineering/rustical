@@ -7,13 +7,10 @@ use rustical_store::{auth::User, Calendar, CalendarObject, CalendarStore, Error}
 use super::HulyStore;
 use crate::api::{
     generate_id, tx, tx_create_event, HulyEvent, HulyEventData, HulyEventCreateData, HulyEventTx, HulyEventUpdateData,
-    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE, CLASS_TX_CREATE_DOC, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC,
-    SPACE_CALENDAR, SPACE_TX, ID_NOT_ATTACHED, COLLECTION_EVENTS,
+    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE, CLASS_TX_REMOVE_DOC, CLASS_TX_UPDATE_DOC, SPACE_TX,
 };
-use crate::convert::{
-    parse_rrule_string, from_ical_get_timezone, from_ical_get_timestamp_required,
-    from_ical_get_timestamps, from_ical_get_exdate
-};
+use crate::convert_rrule::parse_rrule_string;
+use crate::convert_time::{from_ical_get_event_bounds, from_ical_get_timestamp_required, from_ical_get_exdate, from_ical_get_timezone};
 
 fn get_account<'a>(user: &'a User) -> Result<&'a str, Error> {
     user.account.as_ref().map(|s| s.as_str()).ok_or(Error::InvalidData("Missing user account id".into()))
@@ -220,18 +217,14 @@ impl HulyStore {
                 }
             }
         }
-        let (start, end, all_day) = from_ical_get_timestamps(&event_obj.event)?;
-        if let Some(utc_msec) = start {
-            if utc_msec != old_event.date {
-                update_data.date = Some(utc_msec);
-                update_count += 1;
-            }
+        let (date, due_date, all_day) = from_ical_get_event_bounds(&event_obj.event)?;
+        if date != old_event.date {
+            update_data.date = Some(date);
+            update_count += 1;
         }
-        if let Some(utc_msec) = end {
-            if utc_msec != old_event.due_date {
-                update_data.due_date = Some(utc_msec);
-                update_count += 1;
-            }
+        if due_date != old_event.due_date {
+            update_data.due_date = Some(due_date);
+            update_count += 1;
         }
         if all_day != old_event.all_day {
             update_data.all_day = Some(all_day);
@@ -258,7 +251,7 @@ impl HulyStore {
             return Err(Error::InvalidData("Unable change event recurrency".into()));
         }
         if is_old_recurrent {
-            let exdate = from_ical_get_exdate(event_obj)?;
+            let exdate = from_ical_get_exdate(&event_obj.event)?;
             if old_event.exdate != exdate {
                 update_data.exdate = exdate;
                 update_count += 1;
