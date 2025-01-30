@@ -519,9 +519,9 @@ impl RecurringRule {
     }
 }
 
-pub(crate) fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint: &str) -> Result<(Option<Timestamp>, bool), Error> {
+pub fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint: &str) -> Result<(Option<Timestamp>, bool), Error> {
     let Some(value) = &prop.value else {
-        return Ok((None, false))
+        return Err(Error::InvalidData(format!("Missing value: {}", prop_hint)));
     };
     let Some(params) = &prop.params else {
         let utc = NaiveDateTime::parse_from_str(value.as_str(), "%Y%m%dT%H%M%SZ");
@@ -549,7 +549,7 @@ pub(crate) fn from_ical_get_timestamp(prop: &ical::property::Property, prop_hint
                     return Ok((Some(ms), true));
                 }
             },
-            // params=Some([("TZID", ["Asia/Novosibirsk"])]), 
+            // params=Some([("TZID", ["Asia/Novosibirsk"])]),
             "TZID" => {
                 if param_values.is_empty() {
                     return Err(Error::InvalidData(format!("timezone not set: {}", prop_hint)));

@@ -5,7 +5,7 @@ mod addressbook_store;
 mod auth;
 mod calendar_cache;
 mod calendar_store;
-mod convert;
+pub mod convert;
 mod subscription_store;
 
 #[derive(Debug)]
