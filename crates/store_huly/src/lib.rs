@@ -6,6 +6,8 @@ mod auth;
 mod calendar_cache;
 mod calendar_store;
 mod convert;
+mod convert_rrule;
+mod convert_time;
 mod subscription_store;
 
 #[derive(Debug)]
