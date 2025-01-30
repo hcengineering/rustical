@@ -158,34 +158,7 @@ impl HulyCalendarCache {
         }).collect())
     }
 
-    pub(crate) async fn get_event(&mut self, user: &User, event_id: &str) -> Result<HulyEventData, Error> {
-        let entry = if let Some(entry) = self.get_entry(user)? {
-            entry
-        } else {
-            self.add_entry(user).await?
-        };
-        let auth = user.try_into()?;
-        let calendar_id = entry.calendar_id.clone();
-        let params = FindParams {
-            class: CLASS_EVENT,
-            query: HashMap::from([
-                ("calendar", calendar_id.as_str()),
-                ("eventId", event_id),
-            ]),
-            options: None,
-        };
-        let mut events = find_all::<Vec<HulyEventData>>(&self.api_url, &auth, &params).await?;
-        //println!("*** HULY_EVENTS:\n{}", serde_json::to_string_pretty(&events).unwrap());
-        if events.is_empty() {
-            return Err(Error::NotFound)
-        }
-        let mut event = events.remove(0);
-        event.event_id = Some(event_id.to_string());
-        //println!("*** huly event: {}", serde_json::to_string_pretty(&event).unwrap());
-        Ok(event)
-    }
-
-    pub(crate) async fn get_event_ex(&mut self, user: &User, event_id: &str) -> Result<HulyEvent, Error> {
+    pub(crate) async fn get_event(&mut self, user: &User, event_id: &str, include_recurrence: bool) -> Result<HulyEvent, Error> {
         println!("\n### GET_EVENT {}\n", event_id);
         let entry = if let Some(entry) = self.get_entry(user)? {
             entry
@@ -213,7 +186,7 @@ impl HulyCalendarCache {
         event.event_id = Some(event_id.to_string());
 
         let mut instances = None;
-        if event.class == CLASS_RECURRING_EVENT {
+        if include_recurrence && event.class == CLASS_RECURRING_EVENT {
             let params = FindParams {
                 class: CLASS_RECURRING_INSTANCE,
                 query: HashMap::from([

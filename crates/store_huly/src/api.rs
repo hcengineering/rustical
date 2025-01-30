@@ -84,18 +84,31 @@ impl HulyEvent {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecurringRule {
     pub(crate) freq: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) end_date: Option<Timestamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) interval: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_second: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_minute: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_hour: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_day: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_month_day: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_year_day: Option<Vec<u16>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_week_no: Option<Vec<i8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_month: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) by_set_pos: Option<Vec<i16>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) wkst: Option<Vec<String>>,
 }
 
@@ -157,7 +170,7 @@ pub(crate) struct HulyEventCreateData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct HulyEventTx<'a, T> {
+struct HulyEventTx<'a, T> {
     #[serde(rename = "_id")]
     pub(crate) id: String,
     #[serde(rename = "_class")]
@@ -301,7 +314,7 @@ where T: for<'de> serde::de::Deserialize<'de>,
 struct TxResult {
 }
 
-pub(crate) async fn tx<'a, Tx>(url: &str, auth: &ApiAuth<'a>, tx: &Tx) -> Result<(), Error> 
+async fn tx<'a, Tx>(url: &str, auth: &ApiAuth<'a>, tx: &Tx) -> Result<(), Error> 
 where
     Tx: serde::Serialize,
 {
@@ -334,17 +347,21 @@ pub(crate) async fn get_account<'u>(url: &str, auth: &ApiAuth<'u>) -> Result<Hul
     Ok(account)
 }
 
+fn get_user_id<'a>(user: &'a User) -> Result<&'a str, Error> {
+    user.account.as_ref().map(|s| s.as_str()).ok_or_else(|| Error::InvalidData("Missing user account id".into()))
+}
+
 pub(crate) async fn tx_create_event(url: &str, user: &User, class: &str, data: &HulyEventCreateData) -> Result<(), Error> {
     let auth = user.try_into()?;
-    let account = user.account.as_ref().map(|s| s.as_str()).ok_or_else(|| Error::InvalidData("Missing user account id".into()))?;
+    let user_id = get_user_id(user)?;
     let tx_id = generate_id(url, &auth, CLASS_TX_CREATE_DOC).await?;
     let obj_id = generate_id(url, &auth, class).await?;
     let create_tx = HulyEventTx {
         id: tx_id,
         class: CLASS_TX_CREATE_DOC,
         space: SPACE_TX,
-        modified_by: account,
-        created_by: account,
+        modified_by: user_id,
+        created_by: user_id,
         object_id: obj_id.as_str(),
         object_class: class,
         object_space: SPACE_CALENDAR,
@@ -354,7 +371,52 @@ pub(crate) async fn tx_create_event(url: &str, user: &User, class: &str, data: &
         attached_to: ID_NOT_ATTACHED,
         attached_to_class: CLASS_EVENT,
     };
-    println!("*** CREATE_TX {}", serde_json::to_string_pretty(&create_tx).unwrap());
-    tx(url, &auth, &create_tx).await?;
-    Ok(())
+    println!("*** CREATE_TX:\n{}", serde_json::to_string_pretty(&create_tx).unwrap());
+    tx(url, &auth, &create_tx).await
+}
+
+pub(crate) async fn tx_delete_event(url: &str, user: &User, data: &HulyEventData) -> Result<(), Error> {
+    let auth = user.try_into()?;
+    let user_id = get_user_id(user)?;
+    let tx_id = generate_id(url, &auth, CLASS_TX_CREATE_DOC).await?;
+    let remove_tx = HulyEventTx::<()> {
+        id: tx_id,
+        class: CLASS_TX_REMOVE_DOC,
+        space: SPACE_TX,
+        modified_by: user_id,
+        created_by: user_id,
+        object_id: data.id.as_str(),
+        object_class: data.class.as_str(),
+        object_space: data.space.as_str(),
+        operations: None,
+        attributes: None,
+        collection: data.collection.as_str(),
+        attached_to: data.attached_to.as_str(),
+        attached_to_class: data.attached_to_class.as_str(),
+    };
+    println!("*** REMOVE TX:\n{}", remove_tx.pretty_str());
+    tx(url, &auth, &remove_tx).await
+}
+
+pub(crate) async fn tx_update_event(url: &str, user: &User, old_event: &HulyEventData, data: &HulyEventUpdateData) -> Result<(), Error> {
+    let auth = user.try_into()?;
+    let user_id = get_user_id(user)?;
+    let tx_id = generate_id(url, &auth, CLASS_TX_CREATE_DOC).await?;
+    let update_tx = HulyEventTx {
+        id: tx_id,
+        class: CLASS_TX_UPDATE_DOC,
+        space: SPACE_TX,
+        modified_by: user_id,
+        created_by: user_id,
+        object_id: old_event.id.as_str(),
+        object_class: old_event.class.as_str(),
+        object_space: old_event.space.as_str(),
+        operations: Some(data),
+        attributes: None,
+        collection: old_event.collection.as_str(),
+        attached_to: old_event.attached_to.as_str(),
+        attached_to_class: old_event.attached_to_class.as_str(),
+    };
+    println!("*** UPDATE_TX:\n{}", update_tx.pretty_str());
+    tx(url, &auth, &update_tx).await
 }
