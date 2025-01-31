@@ -98,14 +98,37 @@ pub(crate) async fn get_workspaces(url: &str, token: &str) -> Result<Vec<String>
 
 #[async_trait]
 impl AuthenticationProvider for HulyAuthProvider {
-    async fn validate_user_token(&self, user_id: &str, password: &str) -> Result<Option<User>, Error> {
+    async fn validate_user_token(&self, user_id: &str, token: &str) -> Result<Option<User>, Error> {
+        // If user_id is empty, treat token as Bearer token
+        if user_id.is_empty() {
+            // Try to get account info using the token directly
+            let account = get_account(&self.api_url, &ApiAuth {
+                token,
+                workspace: None,
+            }).await;
+
+            if let Err(err) = &account {
+                tracing::error!("Error validating Bearer token: {:?}", err);
+                return Ok(None);
+            }
+            let account = account.unwrap();
+
+            return Ok(Some(User {
+                id: account.id.clone(),
+                displayname: Some(account.id),
+                password: Some(token.to_string()),
+                workspace: None,
+                account: Some(account.id),
+            }));
+        }
+
         let mut p = user_id.split("|");
         let user_id = p.next().unwrap();
         let workspace = p.next();
 
         tracing::debug!("HULY_LOGIN user={} ws={:?}", user_id, workspace);
 
-        let token = login(&self.accounts_url, user_id, password).await;
+        let token = login(&self.accounts_url, user_id, token).await;
         if let Err(err) = &token {
             tracing::error!("Error logging in: {:?}", err);
             // AuthenticationMiddleware can't handle errors, it crashes the request thread
@@ -132,8 +155,8 @@ impl AuthenticationProvider for HulyAuthProvider {
             return Ok(None);
         }
         let ws_token = ws_token.unwrap();
-        
-        let account = get_account(&self.api_url, &ApiAuth { 
+
+        let account = get_account(&self.api_url, &ApiAuth {
             token: ws_token.as_str(),
             workspace,
         }).await;
