@@ -4,7 +4,6 @@ use actix_web::middleware::NormalizePath;
 use actix_web::{web, App};
 use rustical_caldav::caldav_service;
 use rustical_carddav::carddav_service;
-use rustical_frontend::{configure_frontend, FrontendConfig};
 //use rustical_frontend::{configure_frontend, FrontendConfig};
 use rustical_store::auth::AuthenticationProvider;
 use rustical_store::{AddressbookStore, CalendarStore, SubscriptionStore};

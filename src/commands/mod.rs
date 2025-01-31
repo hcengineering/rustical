@@ -3,7 +3,6 @@ use clap::{Parser, ValueEnum};
 use password_hash::PasswordHasher;
 use pbkdf2::Params;
 use rand::{rngs::OsRng, RngCore};
-use rustical_frontend::FrontendConfig;
 use rustical_store::auth::{StaticUserStoreConfig, User};
 //use rustical_frontend::FrontendConfig;
 

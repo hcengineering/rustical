@@ -35,7 +35,7 @@ pub fn caldav_service<
     addr_store: Arc<AS>,
     subscription_store: Arc<S>,
 ) -> impl HttpServiceFactory {
-    let birthday_store = Arc::new(ContactBirthdayStore::new(addr_store));
+    //let birthday_store = Arc::new(ContactBirthdayStore::new(addr_store));
 
     web::scope("")
             .wrap(AuthenticationMiddleware::new(auth_provider))
