@@ -1,11 +1,12 @@
 use super::{AuthenticationProvider, User};
 use actix_session::Session;
 use actix_web::{
+    body::{BoxBody, EitherBody},
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header::Header,
     FromRequest, HttpMessage,
 };
-use actix_web_httpauth::headers::authorization::{Authorization, Basic};
+use actix_web_httpauth::headers::authorization::{Authorization, Basic, Bearer};
 use std::{
     future::{ready, Future, Ready},
     pin::Pin,
@@ -66,7 +67,22 @@ where
         let auth_provider = Arc::clone(&self.auth_provider);
 
         Box::pin(async move {
-            if let Ok(auth) = Authorization::<Basic>::parse(req.request()) {
+            let mut is_authenticated = false;
+
+            // Try Bearer auth first
+            if let Ok(auth) = Authorization::<Bearer>::parse(req.request()) {
+                let token = auth.as_ref().token();
+                if let Ok(Some(user)) = auth_provider
+                    .validate_user_token("", token)
+                    .instrument(info_span!("validate_user_token"))
+                    .await
+                {
+                    req.extensions_mut().insert(user);
+                    is_authenticated = true;
+                }
+            }
+            // Fallback to Basic auth
+            else if let Ok(auth) = Authorization::<Basic>::parse(req.request()) {
                 // A simple stupid way to pass workspace into auth provider without modifications of interfaces
                 let mut ws = None;
                 let mut parts = req.request().path().split("/");
@@ -92,22 +108,38 @@ where
                         .await
                     {
                         req.extensions_mut().insert(user);
+                        is_authenticated = true;
                     }
                 }
             }
 
-            // Extract user from session cookie
-            if let Ok(session) = Session::extract(req.request()).await {
-                match session.get::<User>("user") {
-                    Ok(Some(user)) => {
-                        req.extensions_mut().insert(user);
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        dbg!(err);
-                    }
-                };
+            // Extract user from session cookie if no other auth succeeded
+            if !is_authenticated {
+                if let Ok(session) = Session::extract(req.request()).await {
+                    match session.get::<User>("user") {
+                        Ok(Some(user)) => {
+                            req.extensions_mut().insert(user);
+                            is_authenticated = true;
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            dbg!(err);
+                        }
+                    };
+                }
             }
+
+            // Return 401 with WWW-Authenticate header if no valid authentication
+            if !is_authenticated {
+                let response = actix_web::HttpResponse::Unauthorized()
+                    .insert_header((
+                        actix_web::http::header::WWW_AUTHENTICATE,
+                        actix_web::http::header::HeaderValue::from_static("Bearer"),
+                    ))
+                    .finish();
+                return Ok(response.into_service_response(req));
+            }
+
             service.call(req).await
         })
     }
