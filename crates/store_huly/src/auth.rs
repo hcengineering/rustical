@@ -121,6 +121,9 @@ impl AuthenticationProvider for HulyAuthProvider {
                 password: Some(token.clone()),
                 workspace: None,
                 account: None,
+                app_tokens: vec![],
+                groups: vec![],
+                inherited_groups: vec![],
             }));
         };
 
@@ -151,6 +154,9 @@ impl AuthenticationProvider for HulyAuthProvider {
             password: Some(ws_token),
             workspace: Some(workspace.to_string()),
             account: Some(account.id),
-        }))
+            app_tokens: vec![],
+            groups: vec![],
+            inherited_groups: vec![],
+    }))
     }
 }
