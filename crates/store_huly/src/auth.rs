@@ -122,8 +122,8 @@ impl AuthenticationProvider for HulyAuthProvider {
                 workspace: None,
                 account: None,
                 app_tokens: vec![],
-                groups: vec![],
-                inherited_groups: vec![],
+                memberships: vec![],
+                principal_type: rustical_store::auth::user::PrincipalType::Individual,
             }));
         };
 
@@ -155,8 +155,16 @@ impl AuthenticationProvider for HulyAuthProvider {
             workspace: Some(workspace.to_string()),
             account: Some(account.id),
             app_tokens: vec![],
-            groups: vec![],
-            inherited_groups: vec![],
-    }))
+            memberships: vec![],
+            principal_type: rustical_store::auth::user::PrincipalType::Individual,
+        }))
+    }
+
+    async fn get_principal(&self, _id: &str) -> Result<Option<User>, Error> {
+        Ok(None)
+    }
+
+    async fn add_app_token(&self, _user_id: &str, _name: String, _token: String) -> Result<(), Error> {
+        Ok(())
     }
 }

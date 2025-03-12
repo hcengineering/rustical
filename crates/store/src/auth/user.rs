@@ -56,6 +56,7 @@ pub struct User {
     #[serde(default)]
     pub memberships: Vec<String>,
     pub account: Option<String>,
+    pub workspace: Option<String>,
 }
 
 impl User {

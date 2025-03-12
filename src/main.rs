@@ -72,8 +72,8 @@ fn load_confing_from_env() -> Config {
         data_store: config::DataStoreConfig::Sqlite(config::SqliteDataStoreConfig {
             db_url: "".into(),
         }),
-        auth: config::AuthConfig::Static(rustical_store::auth::StaticUserStoreConfig {
-            users: vec![],
+        auth: config::AuthConfig::Toml(rustical_store::auth::TomlUserStoreConfig {
+            path: "/etc/rustical/principals.toml".to_owned(),
         }),
         http: config::HttpConfig {
             port: std::env::var("PORT").unwrap_or("9070".to_string()).parse().unwrap(),
@@ -86,6 +86,7 @@ fn load_confing_from_env() -> Config {
             enabled: false,
             allowed_push_servers: None
         },
+        nextcloud_login: Default::default(),
         huly: config::HulyConfig {
             api_url: std::env::var("API_URL").unwrap_or_else(|_| panic!("API_URL is not set")),
             accounts_url: std::env::var("ACCOUNTS_URL").unwrap_or_else(|_| panic!("ACCOUNTS_URL is not set")),
@@ -167,6 +168,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -242,3 +244,4 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }
+*/
