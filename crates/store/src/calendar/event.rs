@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct EventObject {
-    pub(crate) event: IcalEvent,
-    pub(crate) timezones: HashMap<String, IcalTimeZone>,
+    pub event: IcalEvent,
+    pub timezones: HashMap<String, IcalTimeZone>,
 }
 
 impl EventObject {

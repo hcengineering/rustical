@@ -1,5 +1,32 @@
 # RustiCal
 
+This is a fork of [RustiCal](https://github.com/lennart-k/rustical) to provide a CalDAV server for [Huly Platform](https://github.com/hcengineering/platform) calendars.
+
+This branch supports only `/caldav` endpoint, other features are disabled.
+
+To make it easier to run on cluster, this branch uses only env variables for configuration, no config file:
+
+- `HTTP_HOST` - an address to listen on, default is `0.0.0.0`
+- `HTTP_PORT` - a port to listen to, default is `9070`
+- `ACCOUNTS_URL` - address of accounts service, default is `http://huly.local:3000`
+- `LOG_LEVEL` - logging level `error`,`warn`,`info`,`debug`,`trace`,`off`, default is `warn`
+
+Local run:
+
+```bash
+cargo build & ./target/debug/rustical
+```
+
+In a calendar application (e.g. Evolution on Linux) use such URL for registering an external calendar:
+
+```
+http://localhost:9070/caldav/user/${USER_EMAIL}/calendar/${WORKSPACE_NAME}
+```
+
+---
+
+**Original readme:**
+
 a CalDAV/CardDAV server
 
 > [!CAUTION]

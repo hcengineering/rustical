@@ -67,7 +67,24 @@ where
 
         Box::pin(async move {
             if let Ok(auth) = Authorization::<Basic>::parse(req.request()) {
-                let user_id = auth.as_ref().user_id();
+                // A simple stupid way to pass workspace into auth provider without modifications of interfaces
+                let mut ws = None;
+                let mut parts = req.request().path().split("/");
+                let mut get_ws = false;
+                while let Some(part) = parts.next() {
+                    if part == "calendar" {
+                        get_ws = true;
+                    } else if get_ws {
+                        ws = Some(part.to_string());
+                        break;
+                    }
+                }
+                let user_id = if let Some(ws) = ws {
+                    &format!("{}|{}", auth.as_ref().user_id(), ws)
+                } else {
+                    auth.as_ref().user_id()
+                };
+                //let user_id = auth.as_ref().user_id();
                 if let Some(password) = auth.as_ref().password() {
                     if let Ok(Some(user)) = auth_provider
                         .validate_user_token(user_id, password)

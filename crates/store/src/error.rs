@@ -20,6 +20,12 @@ pub enum Error {
     #[error(transparent)]
     IO(#[from] std::io::Error),
 
+    #[error("API error: {0}")]
+    ApiError(String),
+
+    #[error("Unauthorized")]
+    UserNotFound,
+
     #[error(transparent)]
     ParserError(#[from] ical::parser::ParserError),
 
@@ -34,6 +40,7 @@ impl ResponseError for Error {
             Self::AlreadyExists => StatusCode::CONFLICT,
             Self::InvalidData(_) => StatusCode::BAD_REQUEST,
             Self::ReadOnly => StatusCode::FORBIDDEN,
+            Self::UserNotFound => StatusCode::UNAUTHORIZED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

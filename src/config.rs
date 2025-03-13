@@ -42,6 +42,7 @@ pub enum AuthConfig {
 #[serde(deny_unknown_fields, default)]
 pub struct TracingConfig {
     pub opentelemetry: bool,
+    pub log_level: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -75,6 +76,18 @@ impl Default for NextcloudLoginConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct HulyConfig {
+    pub accounts_url: String,
+    /// When updating, a client makes several calls in sequence
+    /// This is not practical to send requests to Huly API at each client's call,
+    /// because all of them address the same data.
+    /// So after the first call we cache the data for a short period of time
+    /// to make subsequent calls faster
+    pub cache_invalidation_interval_secs: u64,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -89,4 +102,5 @@ pub struct Config {
     pub dav_push: DavPushConfig,
     #[serde(default)]
     pub nextcloud_login: NextcloudLoginConfig,
+    pub huly: HulyConfig,
 }
