@@ -74,7 +74,13 @@ impl Resource for CalendarObjectResource {
             CalendarObjectPropWrapperName::CalendarObject(prop) => {
                 CalendarObjectPropWrapper::CalendarObject(match prop {
                     CalendarObjectPropName::Getetag => {
-                        CalendarObjectProp::Getetag(self.object.get_etag())
+                        //CalendarObjectProp::Getetag(self.object.get_etag())
+                        CalendarObjectProp::Getetag(
+                            self.object
+                                .etag
+                                .clone()
+                                .unwrap_or_else(|| self.object.get_etag()),
+                        )
                     }
                     CalendarObjectPropName::CalendarData => {
                         CalendarObjectProp::CalendarData(self.object.get_ics().to_owned())

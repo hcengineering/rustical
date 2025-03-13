@@ -1,3 +1,4 @@
+/*
 use crate::config::Config;
 use actix_web::HttpServer;
 use actix_web::http::KeepAlive;
@@ -233,4 +234,115 @@ mod tests {
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
+}
+*/
+
+use crate::config::Config;
+use actix_web::http::KeepAlive;
+use actix_web::HttpServer;
+use anyhow::Result;
+use app::make_app;
+use rustical_dav::push::push_notifier;
+use rustical_nextcloud_login::NextcloudFlows;
+use setup_tracing::setup_tracing;
+use std::sync::Arc;
+
+mod app;
+mod config;
+mod setup_tracing;
+
+fn load_confing_from_env() -> Config {
+    Config {
+        data_store: config::DataStoreConfig::Sqlite(config::SqliteDataStoreConfig {
+            db_url: "".into(),
+        }),
+        auth: config::AuthConfig::Toml(rustical_store::auth::TomlUserStoreConfig {
+            path: "".to_owned(),
+        }),
+        http: config::HttpConfig {
+            port: std::env::var("HTTP_PORT")
+                .unwrap_or("9070".to_string())
+                .parse()
+                .unwrap(),
+            host: std::env::var("HTTP_HOST").unwrap_or("0.0.0.0".to_string()),
+        },
+        frontend: rustical_frontend::FrontendConfig {
+            enabled: false,
+            secret_key: [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+        },
+        tracing: config::TracingConfig {
+            opentelemetry: false,
+            log_level: std::env::var("LOG_LEVEL").unwrap_or("warn".to_string()),
+        },
+        dav_push: config::DavPushConfig {
+            enabled: false,
+            allowed_push_servers: None,
+        },
+        nextcloud_login: Default::default(),
+        huly: config::HulyConfig {
+            accounts_url: std::env::var("ACCOUNTS_URL")
+                .unwrap_or("http://huly.local:3000".to_string()),
+            cache_invalidation_interval_secs: 5,
+        },
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config = load_confing_from_env();
+
+    setup_tracing(&config.tracing);
+
+    let calendar_cache = rustical_store_huly::HulyCalendarCache::new(
+        config.huly.accounts_url.clone(),
+        std::time::Duration::from_secs(config.huly.cache_invalidation_interval_secs),
+    );
+    let calendar_cache = Arc::new(tokio::sync::Mutex::new(calendar_cache));
+    let user_store = Arc::new(rustical_store_huly::HulyAuthProvider::new(
+        config.huly.accounts_url.clone(),
+        calendar_cache.clone(),
+    ));
+    let (_, recv) = tokio::sync::mpsc::channel(1000);
+    let store = Arc::new(rustical_store_huly::HulyStore::new(calendar_cache));
+    let (addr_store, cal_store, subscription_store, update_recv) =
+        (store.clone(), store.clone(), store.clone(), recv);
+
+    if config.dav_push.enabled {
+        tokio::spawn(push_notifier(
+            config.dav_push.allowed_push_servers,
+            update_recv,
+            subscription_store.clone(),
+        ));
+    }
+
+    let nextcloud_flows = Arc::new(NextcloudFlows::default());
+
+    println!(
+        "Starting server on {}:{}",
+        config.http.host, config.http.port
+    );
+    HttpServer::new(move || {
+        make_app(
+            addr_store.clone(),
+            cal_store.clone(),
+            subscription_store.clone(),
+            user_store.clone(),
+            config.frontend.clone(),
+            config.nextcloud_login.clone(),
+            nextcloud_flows.clone(),
+        )
+    })
+    .bind((config.http.host, config.http.port))?
+    // Workaround for a weird bug where
+    // new requests might timeout since they cannot properly reuse the connection
+    // https://github.com/lennart-k/rustical/issues/10
+    .keep_alive(KeepAlive::Disabled)
+    .run()
+    .await?;
+
+    Ok(())
 }

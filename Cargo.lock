@@ -2810,6 +2810,7 @@ version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d19c46a6fdd48bc4dab94b6103fccc55d34c67cc0ad04653aad4ea2a07cd7bbb"
 dependencies = [
+ "async-compression",
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
@@ -2840,6 +2841,7 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower 0.5.2",
  "tower-service",
  "url",
@@ -3038,8 +3040,10 @@ dependencies = [
  "rustical_frontend",
  "rustical_oidc",
  "rustical_store",
+ "rustical_store_huly",
  "rustical_store_sqlite",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
  "toml",
@@ -3129,7 +3133,7 @@ dependencies = [
  "async-trait",
  "derive_more 2.0.1",
  "futures-util",
- "itertools 0.14.0",
+ "itertools",
  "log",
  "quick-xml",
  "reqwest",
@@ -3213,6 +3217,25 @@ dependencies = [
  "toml",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "rustical_store_huly"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "chrono-tz",
+ "ical",
+ "reqwest",
+ "rustical_store",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
