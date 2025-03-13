@@ -3,7 +3,7 @@ use actix_web::dev::{ServiceFactory, ServiceRequest, ServiceResponse};
 use actix_web::middleware::NormalizePath;
 use actix_web::{App, web};
 use rustical_caldav::caldav_service;
-use rustical_carddav::carddav_service;
+//use rustical_carddav::carddav_service;
 use rustical_frontend::nextcloud_login::{NextcloudFlows, configure_nextcloud_login};
 use rustical_frontend::{FrontendConfig, configure_frontend};
 use rustical_oidc::OidcConfig;
@@ -43,15 +43,15 @@ pub fn make_app<AS: AddressbookStore, CS: CalendarStore, S: SubscriptionStore>(
             addr_store.clone(),
             subscription_store.clone(),
         )))
+        /*
         .service(web::scope("/carddav").service(carddav_service(
             auth_provider.clone(),
             addr_store.clone(),
             subscription_store,
         )))
+        */
         .service(
-            web::scope("/.well-known")
-                .service(web::redirect("/caldav", "/caldav"))
-                .service(web::redirect("/carddav", "/carddav")),
+            web::scope("/.well-known").service(web::redirect("/caldav", "/caldav")), //.service(web::redirect("/carddav", "/carddav")),
         );
 
     if nextcloud_login_config.enabled {

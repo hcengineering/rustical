@@ -10,6 +10,7 @@ use opentelemetry_semantic_conventions::{
     SCHEMA_URL,
     resource::{SERVICE_NAME, SERVICE_VERSION},
 };
+use std::str::FromStr;
 #[cfg(feature = "opentelemetry")]
 use std::time::Duration;
 use tracing::level_filters::LevelFilter;
@@ -51,7 +52,11 @@ pub fn init_otel() -> Tracer {
 pub fn setup_tracing(config: &TracingConfig) {
     let fmt_layer = tracing_subscriber::fmt::layer();
     let filter_layer = EnvFilter::builder()
-        .with_default_directive(LevelFilter::WARN.into())
+        .with_default_directive(
+            LevelFilter::from_str(&config.log_level)
+                .unwrap_or(LevelFilter::WARN)
+                .into(),
+        )
         .from_env_lossy()
         .add_directive("h2=warn".parse().unwrap())
         .add_directive("hyper_util=warn".parse().unwrap())
