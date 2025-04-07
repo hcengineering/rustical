@@ -1,15 +1,17 @@
+use std::collections::HashMap;
 use async_trait::async_trait;
 use rustical_store::{
     auth::{AuthenticationProvider, User},
     Error,
 };
 use serde::{Deserialize, Serialize};
-
+use crate::api::{find_all, FindOptions, FindParams, HulyPerson, CLASS_PERSON};
 use super::HulyAuthProvider;
 
 #[derive(Debug, Clone)]
 pub(crate) struct HulyUser {
     pub(crate) id: String,
+    pub(crate) contact_id: String,
     pub(crate) social_id: String,
     pub(crate) account_uuid: String,
     pub(crate) workspace_url: String,
@@ -244,6 +246,7 @@ impl AuthenticationProvider for HulyAuthProvider {
 
         let mut huly_user = HulyUser {
             id: user_id.to_string(),
+            contact_id: "".to_string(),
             social_id: login_info.social_id.clone(),
             account_uuid: login_info.account.clone(),
             workspace_url: "".to_string(),
@@ -285,6 +288,23 @@ impl AuthenticationProvider for HulyAuthProvider {
         huly_user.workspace_uuid = ws_uuid.unwrap();
         huly_user.token = selected_ws.0;
         huly_user.api_url = selected_ws.1;
+
+        let params = FindParams {
+            class: CLASS_PERSON,
+            query: HashMap::from([("personUuid", login_info.account.as_str())]),
+            options: Some(FindOptions {
+                projection: Some(HashMap::from([
+                    ("_id", 1),
+                ])),
+            }),
+        };
+        let persons = find_all::<HulyPerson>(&huly_user, &params).await?;
+        if persons.is_empty() {
+            tracing::error!("Error finding local person for account {}", login_info.account);
+            return Ok(None);
+        }
+        let person = persons.get(0).unwrap();
+        huly_user.contact_id = person.id.clone();
 
         tracing::debug!("HULY_LOGIN {:?}", huly_user);
 
