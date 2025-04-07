@@ -1,4 +1,5 @@
 use crate::api::{HulyEvent, HulyEventCreateData, HulyEventData, HulyEventUpdateData, Timestamp};
+use crate::auth::HulyUser;
 use crate::convert_rrule::parse_rrule_string;
 use crate::convert_time::{
     format_duration_rfc5545, format_utc_msec, from_ical_get_event_bounds, from_ical_get_exdate,
@@ -281,6 +282,7 @@ impl TryInto<CalendarObject> for HulyEvent {
 
 impl HulyEventCreateData {
     pub(crate) fn new(
+        user: &HulyUser,
         cal_id: &str,
         event_id: &str,
         event_obj: &EventObject,
@@ -308,7 +310,8 @@ impl HulyEventCreateData {
             } else {
                 "".to_string()
             },
-            participants: Some(vec![]),
+            participants: Some(vec![ user.contact_id.clone() ]),
+            // TODO: make global and local persons from ical participants and add then to event.participants
             external_participants: from_ical_get_participants(&event_obj.event)?,
             reminders: from_ical_get_alarms(&event_obj.event)?,
             title: if let Some(prop) = event_obj.event.get_property("SUMMARY") {

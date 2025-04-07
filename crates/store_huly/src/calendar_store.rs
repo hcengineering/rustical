@@ -232,8 +232,8 @@ impl HulyStore {
     ) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
         let user = cache.get_user(user_id, Some(ws_url))?;
-        let ws_url = cache.get_calendar_id(&user).await?;
-        let data = HulyEventCreateData::new(ws_url.as_str(), event_id, event_obj)?;
+        let cal_id = cache.get_calendar_id(&user).await?;
+        let data = HulyEventCreateData::new(&user, cal_id.as_str(), event_id, event_obj)?;
         // It's not the same id as Huly expect to display uset name in the event
         //data.participants = user.account.as_ref().map(|s| vec![s.clone()]);
         let class = if data.rules.is_some() {
@@ -274,12 +274,12 @@ impl HulyStore {
     ) -> Result<(), Error> {
         let mut cache = self.calendar_cache.lock().await;
         let user = cache.get_user(user_id, Some(ws_url))?;
-        let ws_url = cache.get_calendar_id(&user).await?;
+        let cal_id = cache.get_calendar_id(&user).await?;
         let old_event = cache.get_event(&user, event_id, true).await?;
         //println!("*** OLD_RECURRING_EVENT:\n{}", old_event.pretty_str());
         for event_obj in event_objs {
             if event_obj.event.get_property("RECURRENCE-ID").is_some() {
-                self.update_recurring_instance(&user, ws_url.as_str(), &old_event, event_obj)
+                self.update_recurring_instance(&user, cal_id.as_str(), &old_event, event_obj)
                     .await?;
             } else {
                 // Update 'root' event (All instances)
@@ -296,7 +296,7 @@ impl HulyStore {
     async fn update_recurring_instance(
         &self,
         user: &HulyUser,
-        ws_url: &str,
+        cal_id: &str,
         old_event: &HulyEvent,
         event_obj: &EventObject,
     ) -> Result<(), Error> {
@@ -325,7 +325,7 @@ impl HulyStore {
                 .as_ref()
                 .ok_or_else(|| Error::InvalidData("Empty event id".into()))?;
             let instance_id = generate_id(user).await?;
-            let mut data = HulyEventCreateData::new(ws_url, instance_id.as_str(), event_obj)?;
+            let mut data = HulyEventCreateData::new(&user, cal_id, instance_id.as_str(), event_obj)?;
             data.participants = Some(old_event.data.participants.clone());
             data.original_start_time = Some(original_start_time);
             data.recurring_event_id = Some(event_id.to_string());
