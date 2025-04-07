@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub(crate) type Timestamp = i64;
 
 pub(crate) const CLASS_EVENT: &str = "calendar:class:Event";
+pub(crate) const CLASS_PERSON: &str = "contact:class:Person";
 pub(crate) const CLASS_RECURRING_EVENT: &str = "calendar:class:ReccuringEvent";
 pub(crate) const CLASS_RECURRING_INSTANCE: &str = "calendar:class:ReccuringInstance";
 pub(crate) const CLASS_TX_CREATE_DOC: &str = "core:class:TxCreateDoc";
@@ -197,6 +198,13 @@ struct HulyEventTx<'a, T> {
     pub(crate) collection: &'a str,
     pub(crate) attached_to: &'a str,
     pub(crate) attached_to_class: &'a str,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HulyPerson {
+    #[serde(rename = "_id")]
+    pub(crate) id: String,
 }
 
 impl<'a, T> HulyEventTx<'a, T>
