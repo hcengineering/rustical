@@ -208,11 +208,11 @@ where
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct HulyAccount {
-    pub(crate) uuid: String,
-}
+//#[derive(Debug, Deserialize)]
+//#[serde(rename_all = "camelCase")]
+//pub(crate) struct HulyAccount {
+//    pub(crate) uuid: String,
+//}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -338,11 +338,11 @@ pub(crate) async fn generate_id<'u>(user: &HulyUser) -> Result<String, Error> {
     Ok(id.id)
 }
 
-pub(crate) async fn get_account(user: &HulyUser) -> Result<HulyAccount, Error> {
-    let p: Option<&FindParams> = None;
-    let account: HulyAccount = api_call(HttpMethod::Get, "account", user, p).await?;
-    Ok(account)
-}
+//pub(crate) async fn get_account(user: &HulyUser) -> Result<HulyAccount, Error> {
+//    let p: Option<&FindParams> = None;
+//    let account: HulyAccount = api_call(HttpMethod::Get, "account", user, p).await?;
+//    Ok(account)
+//}
 
 pub(crate) async fn tx_create_event(
     user: &HulyUser,

@@ -1,4 +1,3 @@
-use crate::api::get_account;
 use async_trait::async_trait;
 use rustical_store::{
     auth::{AuthenticationProvider, User},
@@ -29,7 +28,9 @@ struct AccountsResponce<TResult> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LoginInfo {
+    account: String,
     token: String,
+    social_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,7 +136,7 @@ where
     Err(Error::ApiError("Account servce: empty result".into()))
 }
 
-async fn login(url: &str, email: &str, password: &str) -> Result<String, Error> {
+async fn login(url: &str, email: &str, password: &str) -> Result<LoginInfo, Error> {
     let req = AccountRequest {
         method: "login",
         params: AccountRequestParams {
@@ -145,7 +146,7 @@ async fn login(url: &str, email: &str, password: &str) -> Result<String, Error> 
         },
     };
     let res = account_post::<LoginInfo>(url, &req, None).await?;
-    Ok(res.token)
+    Ok(res)
 }
 
 fn extract_api_url(endpoint: &str) -> String {
@@ -232,22 +233,22 @@ impl AuthenticationProvider for HulyAuthProvider {
             return Ok(Some(make_user(&huly_user)));
         }
 
-        let token = login(&self.accounts_url, user_id, password).await;
-        if let Err(err) = &token {
+        let login_info = login(&self.accounts_url, user_id, password).await;
+        if let Err(err) = &login_info {
             tracing::error!("Error logging in: {:?}", err);
             // AuthenticationMiddleware can't handle errors, it crashes the request thread
             // Returning None will cause it to responce with 401 Unauthorized
             return Ok(None);
         }
-        let token = token.unwrap();
+        let login_info = login_info.unwrap();
 
         let mut huly_user = HulyUser {
             id: user_id.to_string(),
-            social_id: format!("email:{}", user_id),
-            account_uuid: "".to_string(),
+            social_id: login_info.social_id.clone(),
+            account_uuid: login_info.account.clone(),
             workspace_url: "".to_string(),
             workspace_uuid: "".to_string(),
-            token: token.to_string(),
+            token: login_info.token.clone(),
             api_url: "".to_string(),
         };
 
@@ -257,7 +258,7 @@ impl AuthenticationProvider for HulyAuthProvider {
             return Ok(Some(user));
         };
 
-        let user_workspaces = get_workspaces(&self.accounts_url, &token).await;
+        let user_workspaces = get_workspaces(&self.accounts_url, &login_info.token).await;
         if let Err(err) = &user_workspaces {
             tracing::error!("Error getting user workspaces: {:?}", err);
             return Ok(None);
@@ -272,7 +273,7 @@ impl AuthenticationProvider for HulyAuthProvider {
             return Ok(None);
         }
 
-        let selected_ws = select_workspace(&self.accounts_url, &token, ws_url).await;
+        let selected_ws = select_workspace(&self.accounts_url, &login_info.token, ws_url).await;
         if let Err(err) = &selected_ws {
             tracing::error!("Error selecting workspace: {:?}", err);
             // AuthenticationMiddleware can't handle errors, it crashes the request thread
@@ -286,14 +287,6 @@ impl AuthenticationProvider for HulyAuthProvider {
         huly_user.api_url = selected_ws.1;
 
         tracing::debug!("HULY_LOGIN {:?}", huly_user);
-
-        let account = get_account(&huly_user).await;
-        if let Err(err) = &account {
-            tracing::error!("Error getting account: {:?}", err);
-            return Ok(None);
-        }
-        let account = account.unwrap();
-        huly_user.account_uuid = account.uuid;
 
         let user = make_user(&huly_user);
         cache.set_user(user_id, Some(ws_url), huly_user);
