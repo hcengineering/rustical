@@ -240,7 +240,7 @@ impl HulyCalendarCache {
 
 impl CachedCalendar {
     async fn new(user: &HulyUser) -> Result<Self, Error> {
-        let calendar_id = format!("{}_calendar", user.social_id);
+        let calendar_id = format!("{}_calendar", user.account_uuid);
 
         // let params = FindParams {
         //     class: "calendar:class:Calendar".to_string(),
@@ -272,7 +272,10 @@ impl CachedCalendar {
             }),
         };
         let events = find_all::<HulyEventSlim>(user, &params).await?;
-        // println!("*** huly events: {}", serde_json::to_string_pretty(&events).unwrap());
+        //println!("*** HULY_EVENTS: {}", serde_json::to_string_pretty(&events).unwrap());
+        if events.is_empty() {
+            tracing::warn!("No events found for calendar {}", calendar_id);
+        }
 
         let mut event_dates = HashMap::new();
         for event in &events {
