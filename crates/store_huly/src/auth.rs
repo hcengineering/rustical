@@ -1,11 +1,15 @@
 use super::HulyAuthProvider;
-use crate::api::{find_all, FindOptions, FindParams, HulyPerson, CLASS_PERSON};
+use crate::{
+    account_api::{
+        generate_token, AccountClient, PersonId, PersonUuid, TokenClaims, WorkspaceUuid,
+    },
+    api::{find_all, FindOptions, FindParams, HulyPerson, CLASS_PERSON},
+};
 use async_trait::async_trait;
 use rustical_store::{
     auth::{AuthenticationProvider, User},
     Error,
 };
-use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::SystemTime};
 
 #[derive(Debug, Clone)]
@@ -21,191 +25,110 @@ pub(crate) struct HulyUser {
     pub(crate) token_updated_at: SystemTime,
     pub(crate) api_url: String,
     pub(crate) remotes: Vec<String>,
+    pub(crate) workspaces: Vec<WorkspaceInfo>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AccountsResponce<TResult> {
-    result: Option<TResult>,
-    error: Option<AccountError>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct LoginInfo {
-    account: String,
+    // Social id that is used for login to the CalDAV server
+    social_id: PersonId,
+
+    // Global person UUID corresponding to the social id
+    account_uuid: PersonUuid,
+
+    // Generated person token that is used for selecting workspace
     token: String,
-    social_id: String,
+
+    // List of workspace UUIDs for wich CalDAV integration is enabled for the social id
+    workspaces: Vec<WorkspaceInfo>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceLoginInfo {
-    token: String,
-    endpoint: String,
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceInfo {
+    pub(crate) uuid: WorkspaceUuid,
+    pub(crate) url: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceInfo {
-    uuid: String,
-    url: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AccountError {
-    code: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AccountRequest<'a> {
-    method: &'static str,
-    params: AccountRequestParams<'a>,
-}
-
-#[derive(Debug, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct AccountRequestParams<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    email: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    password: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    workspace_url: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kind: Option<&'static str>,
-}
-
-async fn account_post<'a, TResult>(
+async fn login(
     url: &str,
-    req: &AccountRequest<'a>,
-    token: Option<&str>,
-) -> Result<TResult, Error>
-where
-    TResult: for<'de> Deserialize<'de>,
-{
-    let client = reqwest::Client::new();
-    let mut response = client.post(url).json(req);
-    if let Some(token) = token {
-        response = response.header("Authorization", format!("Bearer {}", token));
-    }
-    let response = response.send().await;
-    if let Err(err) = response {
-        return Err(Error::ApiError(format!("Account servce: {:?}", err)));
-    }
-    let response = response.unwrap();
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await;
-        if let Err(err) = text {
-            //println!("*** ACCOUNT: resp_error: {:?}", err);
-            return Err(Error::ApiError(format!(
-                "Account servce: resp_error {}: {:?}",
-                status, err
-            )));
+    system_account_uuid: &str,
+    secret: &str,
+    user_id: &str,
+    password: &str,
+) -> Result<LoginInfo, Error> {
+    let client = AccountClient::new_with_account(url, system_account_uuid, secret).await?;
+
+    let social_id = client.find_social_id(user_id).await?;
+    let account_uuid = client.find_account_uuid(&social_id).await?;
+
+    let mut caldav_password = None;
+    let mut caldav_workspaces = Vec::new();
+
+    let integrations = client.list_integrations(&social_id).await?;
+    for integration in &integrations {
+        if integration.workspace_uuid.is_none()
+            || integration.workspace_uuid.as_ref().unwrap().is_empty()
+        {
+            if caldav_password.is_none() {
+                let integration_secret = client.get_integration_secret(&social_id).await?;
+                caldav_password = Some(integration_secret.secret);
+            }
+        } else {
+            caldav_workspaces.push(integration.workspace_uuid.as_ref().unwrap().to_string());
         }
-        let text = text.unwrap();
-        //println!("*** ACCUNT: status_error: {:?}", text);
+    }
+
+    if caldav_password.is_none() {
         return Err(Error::ApiError(format!(
-            "Account servce: status_error {}: {:?}",
-            status, text
+            "CalDAV integration is not enabled for account {} (password)",
+            user_id
         )));
     }
-    let text = response.text().await;
-    if let Err(err) = text {
-        //println!("*** ACCOUNT: resp_error: {:?}", err);
+    let caldav_password = caldav_password.unwrap();
+
+    if caldav_password != password {
+        return Err(Error::ApiError("Provided password is incorrect".into()));
+    }
+
+    if caldav_workspaces.is_empty() {
         return Err(Error::ApiError(format!(
-            "Account servce: resp_error: {:?}",
-            err
+            "CalDAV integration is not enabled for account {} (workspaces)",
+            user_id
         )));
     }
-    let text = text.unwrap();
-    //println!("*** ACCOUNT: json_text: {:?}", text);
-    let result = serde_json::from_str::<AccountsResponce<TResult>>(&text);
-    if let Err(err) = &result {
-        //println!("*** ACCOUNT: json_error: {:?}", err);
+
+    let workspaces_info = client.get_workspaces_info(&caldav_workspaces).await?;
+    let workspaces = workspaces_info
+        .iter()
+        .filter_map(|ws| {
+            if ws.status.is_disabled || ws.status.mode != "active" {
+                return None;
+            }
+            Some(WorkspaceInfo {
+                uuid: ws.uuid.clone(),
+                url: ws.url.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if workspaces.is_empty() {
         return Err(Error::ApiError(format!(
-            "Account servce: json_error: {:?}",
-            err
+            "CalDAV integration is not enabled for account {} (active workspaces)",
+            user_id
         )));
     }
-    let result = result.unwrap();
-    if let Some(error) = result.error {
-        return Err(Error::ApiError(format!("Account servce: {:?}", error.code)));
-    }
-    if let Some(result) = result.result {
-        return Ok(result);
-    }
-    Err(Error::ApiError("Account servce: empty result".into()))
-}
 
-async fn login(url: &str, email: &str, password: &str) -> Result<LoginInfo, Error> {
-    let req = AccountRequest {
-        method: "login",
-        params: AccountRequestParams {
-            email: Some(email),
-            password: Some(password),
-            ..Default::default()
-        },
+    // This token will be used for selecting workspace
+    let claims = TokenClaims {
+        account: &account_uuid,
+        ..Default::default()
     };
-    let res = account_post::<LoginInfo>(url, &req, None).await?;
-    Ok(res)
-}
+    let token = generate_token(&claims, secret)?;
 
-fn extract_api_url(endpoint: &str) -> String {
-    endpoint
-        .replace("ws://", "http://")
-        .replace("wss://", "https://")
-        .trim_matches('/')
-        .to_string()
-}
-
-#[test]
-fn test_extract_api_url() {
-    assert_eq!(
-        extract_api_url("ws://transactor.hc.engineering"),
-        "http://transactor.hc.engineering"
-    );
-    assert_eq!(
-        extract_api_url("wss://transactor.hc.engineering"),
-        "https://transactor.hc.engineering"
-    );
-    assert_eq!(
-        extract_api_url("ws://transactor.hc.engineering/"),
-        "http://transactor.hc.engineering"
-    );
-    assert_eq!(
-        extract_api_url("https://transactor.hc.engineering/"),
-        "https://transactor.hc.engineering"
-    );
-}
-
-async fn select_workspace(
-    url: &str,
-    token: &str,
-    workspace: &str,
-) -> Result<(String, String), Error> {
-    let req = AccountRequest {
-        method: "selectWorkspace",
-        params: AccountRequestParams {
-            workspace_url: Some(workspace),
-            kind: Some("external"),
-            ..Default::default()
-        },
-    };
-    let res = account_post::<WorkspaceLoginInfo>(url, &req, Some(token)).await?;
-    Ok((res.token, extract_api_url(&res.endpoint)))
-}
-
-pub(crate) async fn get_workspaces(url: &str, token: &str) -> Result<Vec<(String, String)>, Error> {
-    let req = AccountRequest {
-        method: "getUserWorkspaces",
-        params: Default::default(),
-    };
-    let res = account_post::<Vec<WorkspaceInfo>>(url, &req, Some(token)).await?;
-    Ok(res.into_iter().map(|w| (w.url, w.uuid)).collect())
+    Ok(LoginInfo {
+        account_uuid,
+        token,
+        social_id,
+        workspaces,
+    })
 }
 
 fn make_user(user: &HulyUser) -> User {
@@ -228,41 +151,45 @@ impl AuthenticationProvider for HulyAuthProvider {
     ) -> Result<Option<User>, Error> {
         let mut p = addr_id_ws.split("|");
         let rem_addr = p.next().unwrap();
-        let user_id = p.next().unwrap();
+        let social_key = p.next().unwrap();
         let ws_url = p.next();
 
         tracing::debug!(
             "HULY_LOGIN rem_addr={} user_id={} ws_url={:?}",
             rem_addr,
-            user_id,
+            social_key,
             ws_url
         );
 
         let mut cache = self.calendar_cache.lock().await;
 
         // Handle login from different remote address
-        if let Some(huly_user) = cache.try_get_user(user_id, ws_url) {
+        if let Some(huly_user) = cache.try_get_user(social_key, ws_url) {
             let rem_addr = rem_addr.to_string();
             if !huly_user.remotes.contains(&rem_addr) {
                 if password == &huly_user.password {
-                    println!("\n\nLogin from different remote address\n\n");
                     let mut huly_user = huly_user.clone();
                     huly_user.remotes.push(rem_addr);
-                    cache.set_user(user_id, ws_url, huly_user);
+                    cache.set_user(social_key, ws_url, huly_user);
                 }
             }
         }
 
         // Handle token expiration
-        if let Some(huly_user) = cache.try_get_user(user_id, ws_url) {
+        if let Some(huly_user) = cache.try_get_user(social_key, ws_url) {
             if huly_user.token_updated_at.elapsed().unwrap() < self.token_expiration {
                 return Ok(Some(make_user(&huly_user)));
-            } else {
-                println!("\n\nToken expired\n\n");
             }
         }
 
-        let login_info = login(&self.accounts_url, user_id, password).await;
+        let login_info = login(
+            &self.accounts_url,
+            &self.system_account_uuid,
+            &self.server_secret,
+            social_key,
+            password,
+        )
+        .await;
         if let Err(err) = &login_info {
             tracing::error!("Error logging in: {:?}", err);
             // AuthenticationMiddleware can't handle errors, it crashes the request thread
@@ -272,10 +199,10 @@ impl AuthenticationProvider for HulyAuthProvider {
         let login_info = login_info.unwrap();
 
         let mut huly_user = HulyUser {
-            id: user_id.to_string(),
+            id: social_key.to_string(),
             contact_id: "".to_string(),
             social_id: login_info.social_id.clone(),
-            account_uuid: login_info.account.clone(),
+            account_uuid: login_info.account_uuid.clone(),
             workspace_url: "".to_string(),
             workspace_uuid: "".to_string(),
             password: password.to_string(),
@@ -283,30 +210,32 @@ impl AuthenticationProvider for HulyAuthProvider {
             token_updated_at: SystemTime::now(),
             api_url: "".to_string(),
             remotes: vec![rem_addr.to_string()],
+            workspaces: login_info.workspaces,
         };
 
         let Some(ws_url) = ws_url else {
             let user = make_user(&huly_user);
-            cache.set_user(user_id, ws_url, huly_user);
+            cache.set_user(social_key, ws_url, huly_user);
             return Ok(Some(user));
         };
 
-        let user_workspaces = get_workspaces(&self.accounts_url, &login_info.token).await;
-        if let Err(err) = &user_workspaces {
-            tracing::error!("Error getting user workspaces: {:?}", err);
-            return Ok(None);
-        }
-        let user_workspaces = user_workspaces.unwrap();
-        let ws_uuid = user_workspaces
-            .into_iter()
-            .find(|(url, _)| url == ws_url)
-            .map(|(_, uuid)| uuid);
+        let ws_uuid = huly_user
+            .workspaces
+            .iter()
+            .find(|ws| ws.url == ws_url)
+            .map(|ws| ws.uuid.clone());
         if ws_uuid.is_none() {
-            tracing::error!("Error finding workspace uuid");
+            tracing::error!(
+                "CalDAV integration is not enabled for {} in workspace {}",
+                social_key,
+                ws_url
+            );
             return Ok(None);
         }
 
-        let selected_ws = select_workspace(&self.accounts_url, &login_info.token, ws_url).await;
+        let account_client =
+            AccountClient::new_with_token(&self.accounts_url, &login_info.token).await?;
+        let selected_ws = account_client.select_workspace(ws_url).await;
         if let Err(err) = &selected_ws {
             tracing::error!("Error selecting workspace: {:?}", err);
             // AuthenticationMiddleware can't handle errors, it crashes the request thread
@@ -321,7 +250,7 @@ impl AuthenticationProvider for HulyAuthProvider {
 
         let params = FindParams {
             class: CLASS_PERSON,
-            query: HashMap::from([("personUuid", login_info.account.as_str())]),
+            query: HashMap::from([("personUuid", login_info.account_uuid.as_str())]),
             options: Some(FindOptions {
                 projection: Some(HashMap::from([("_id", 1)])),
             }),
@@ -330,7 +259,7 @@ impl AuthenticationProvider for HulyAuthProvider {
         if persons.is_empty() {
             tracing::error!(
                 "Error finding local person for account {}",
-                login_info.account
+                login_info.account_uuid
             );
             return Ok(None);
         }
@@ -340,7 +269,7 @@ impl AuthenticationProvider for HulyAuthProvider {
         tracing::debug!("HULY_LOGIN {:?}", huly_user);
 
         let user = make_user(&huly_user);
-        cache.set_user(user_id, Some(ws_url), huly_user);
+        cache.set_user(social_key, Some(ws_url), huly_user);
         Ok(Some(user))
     }
 

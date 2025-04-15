@@ -15,6 +15,7 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
+jsonwebtoken = { workspace = true }
 ical = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
