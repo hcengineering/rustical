@@ -80,9 +80,18 @@ where
                     }
                 }
                 let user_id = if let Some(ws) = ws {
-                    &format!("{}|{}", auth.as_ref().user_id(), ws)
+                    &format!(
+                        "{:?}|{}|{}",
+                        req.request().connection_info().peer_addr(),
+                        auth.as_ref().user_id(),
+                        ws
+                    )
                 } else {
-                    auth.as_ref().user_id()
+                    &format!(
+                        "{:?}|{}",
+                        req.request().connection_info().peer_addr(),
+                        auth.as_ref().user_id()
+                    )
                 };
                 //let user_id = auth.as_ref().user_id();
                 if let Some(password) = auth.as_ref().password() {

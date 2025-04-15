@@ -81,6 +81,7 @@ impl Default for NextcloudLoginConfig {
 #[serde(deny_unknown_fields)]
 pub struct HulyConfig {
     pub accounts_url: String,
+    pub token_expiration_secs: u64,
     /// When updating, a client makes several calls in sequence
     /// This is not practical to send requests to Huly API at each client's call,
     /// because all of them address the same data.
