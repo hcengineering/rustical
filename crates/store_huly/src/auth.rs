@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use super::HulyAuthProvider;
+use crate::api::{find_all, FindOptions, FindParams, HulyPerson, CLASS_PERSON};
 use async_trait::async_trait;
 use rustical_store::{
     auth::{AuthenticationProvider, User},
     Error,
 };
 use serde::{Deserialize, Serialize};
-use crate::api::{find_all, FindOptions, FindParams, HulyPerson, CLASS_PERSON};
-use super::HulyAuthProvider;
+use std::{collections::HashMap, time::SystemTime};
 
 #[derive(Debug, Clone)]
 pub(crate) struct HulyUser {
@@ -16,8 +16,11 @@ pub(crate) struct HulyUser {
     pub(crate) account_uuid: String,
     pub(crate) workspace_url: String,
     pub(crate) workspace_uuid: String,
+    pub(crate) password: String,
     pub(crate) token: String,
+    pub(crate) token_updated_at: SystemTime,
     pub(crate) api_url: String,
+    pub(crate) remotes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,19 +223,43 @@ fn make_user(user: &HulyUser) -> User {
 impl AuthenticationProvider for HulyAuthProvider {
     async fn validate_user_token(
         &self,
-        id_and_ws: &str,
+        addr_id_ws: &str,
         password: &str,
     ) -> Result<Option<User>, Error> {
-        let mut p = id_and_ws.split("|");
+        let mut p = addr_id_ws.split("|");
+        let rem_addr = p.next().unwrap();
         let user_id = p.next().unwrap();
         let ws_url = p.next();
 
-        tracing::debug!("HULY_LOGIN user_id={} ws_url={:?}", user_id, ws_url);
+        tracing::debug!(
+            "HULY_LOGIN rem_addr={} user_id={} ws_url={:?}",
+            rem_addr,
+            user_id,
+            ws_url
+        );
 
         let mut cache = self.calendar_cache.lock().await;
+
+        // Handle login from different remote address
         if let Some(huly_user) = cache.try_get_user(user_id, ws_url) {
-            // TODO: Add token expiration and re-login
-            return Ok(Some(make_user(&huly_user)));
+            let rem_addr = rem_addr.to_string();
+            if !huly_user.remotes.contains(&rem_addr) {
+                if password == &huly_user.password {
+                    println!("\n\nLogin from different remote address\n\n");
+                    let mut huly_user = huly_user.clone();
+                    huly_user.remotes.push(rem_addr);
+                    cache.set_user(user_id, ws_url, huly_user);
+                }
+            }
+        }
+
+        // Handle token expiration
+        if let Some(huly_user) = cache.try_get_user(user_id, ws_url) {
+            if huly_user.token_updated_at.elapsed().unwrap() < self.token_expiration {
+                return Ok(Some(make_user(&huly_user)));
+            } else {
+                println!("\n\nToken expired\n\n");
+            }
         }
 
         let login_info = login(&self.accounts_url, user_id, password).await;
@@ -251,8 +278,11 @@ impl AuthenticationProvider for HulyAuthProvider {
             account_uuid: login_info.account.clone(),
             workspace_url: "".to_string(),
             workspace_uuid: "".to_string(),
+            password: password.to_string(),
             token: login_info.token.clone(),
+            token_updated_at: SystemTime::now(),
             api_url: "".to_string(),
+            remotes: vec![rem_addr.to_string()],
         };
 
         let Some(ws_url) = ws_url else {
@@ -293,14 +323,15 @@ impl AuthenticationProvider for HulyAuthProvider {
             class: CLASS_PERSON,
             query: HashMap::from([("personUuid", login_info.account.as_str())]),
             options: Some(FindOptions {
-                projection: Some(HashMap::from([
-                    ("_id", 1),
-                ])),
+                projection: Some(HashMap::from([("_id", 1)])),
             }),
         };
         let persons = find_all::<HulyPerson>(&huly_user, &params).await?;
         if persons.is_empty() {
-            tracing::error!("Error finding local person for account {}", login_info.account);
+            tracing::error!(
+                "Error finding local person for account {}",
+                login_info.account
+            );
             return Ok(None);
         }
         let person = persons.get(0).unwrap();

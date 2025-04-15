@@ -310,7 +310,7 @@ impl HulyEventCreateData {
             } else {
                 "".to_string()
             },
-            participants: Some(vec![ user.contact_id.clone() ]),
+            participants: Some(vec![user.contact_id.clone()]),
             // TODO: make global and local persons from ical participants and add then to event.participants
             external_participants: from_ical_get_participants(&event_obj.event)?,
             reminders: from_ical_get_alarms(&event_obj.event)?,

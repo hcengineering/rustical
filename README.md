@@ -9,6 +9,7 @@ To make it easier to run on cluster, this branch uses only env variables for con
 - `HTTP_HOST` - an address to listen on, default is `0.0.0.0`
 - `HTTP_PORT` - a port to listen to, default is `9070`
 - `ACCOUNTS_URL` - address of accounts service, default is `http://huly.local:3000`
+- `TOKEN_EXPIRATION_SECS` - cached workspace token lifetime, default is `600`
 - `LOG_LEVEL` - logging level `error`,`warn`,`info`,`debug`,`trace`,`off`, default is `warn`
 
 Local run:

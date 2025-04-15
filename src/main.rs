@@ -286,6 +286,10 @@ fn load_confing_from_env() -> Config {
         huly: config::HulyConfig {
             accounts_url: std::env::var("ACCOUNTS_URL")
                 .unwrap_or("http://huly.local:3000".to_string()),
+            token_expiration_secs: std::env::var("TOKEN_EXPIRATION_SECS")
+                .unwrap_or("600".to_string())
+                .parse()
+                .unwrap(),
             cache_invalidation_interval_secs: 5,
         },
     }
@@ -304,6 +308,7 @@ async fn main() -> Result<()> {
     let calendar_cache = Arc::new(tokio::sync::Mutex::new(calendar_cache));
     let user_store = Arc::new(rustical_store_huly::HulyAuthProvider::new(
         config.huly.accounts_url.clone(),
+        std::time::Duration::from_secs(config.huly.token_expiration_secs),
         calendar_cache.clone(),
     ));
     let (_, recv) = tokio::sync::mpsc::channel(1000);
