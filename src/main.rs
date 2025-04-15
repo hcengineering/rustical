@@ -290,6 +290,9 @@ fn load_confing_from_env() -> Config {
                 .unwrap_or("600".to_string())
                 .parse()
                 .unwrap(),
+            system_account_uuid: std::env::var("SYSTEM_ACCOUNT_UUID")
+                .unwrap_or("1749089e-22e6-48de-af4e-165e18fbd2f9".to_string()),
+            server_secret: std::env::var("SERVER_SECRET").unwrap_or("secret".to_string()),
             cache_invalidation_interval_secs: 5,
         },
     }
@@ -302,13 +305,14 @@ async fn main() -> Result<()> {
     setup_tracing(&config.tracing);
 
     let calendar_cache = rustical_store_huly::HulyCalendarCache::new(
-        config.huly.accounts_url.clone(),
         std::time::Duration::from_secs(config.huly.cache_invalidation_interval_secs),
     );
     let calendar_cache = Arc::new(tokio::sync::Mutex::new(calendar_cache));
     let user_store = Arc::new(rustical_store_huly::HulyAuthProvider::new(
         config.huly.accounts_url.clone(),
         std::time::Duration::from_secs(config.huly.token_expiration_secs),
+        config.huly.system_account_uuid.clone(),
+        config.huly.server_secret.clone(),
         calendar_cache.clone(),
     ));
     let (_, recv) = tokio::sync::mpsc::channel(1000);

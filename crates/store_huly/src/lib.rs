@@ -2,6 +2,7 @@ pub use calendar_cache::HulyCalendarCache;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+mod account_api;
 mod addressbook_store;
 mod api;
 mod auth;
@@ -27,6 +28,8 @@ impl HulyStore {
 pub struct HulyAuthProvider {
     accounts_url: String,
     token_expiration: std::time::Duration,
+    system_account_uuid: String,
+    server_secret: String,
     calendar_cache: Arc<Mutex<HulyCalendarCache>>,
 }
 
@@ -34,11 +37,15 @@ impl HulyAuthProvider {
     pub fn new(
         accounts_url: String,
         token_expiration: std::time::Duration,
+        system_account_uuid: String,
+        server_secret: String,
         calendar_cache: Arc<Mutex<HulyCalendarCache>>,
     ) -> Self {
         Self {
             accounts_url,
             token_expiration,
+            system_account_uuid,
+            server_secret,
             calendar_cache,
         }
     }
