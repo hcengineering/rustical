@@ -26,13 +26,19 @@ impl HulyStore {
 #[derive(Debug)]
 pub struct HulyAuthProvider {
     accounts_url: String,
+    token_expiration: std::time::Duration,
     calendar_cache: Arc<Mutex<HulyCalendarCache>>,
 }
 
 impl HulyAuthProvider {
-    pub fn new(accounts_url: String, calendar_cache: Arc<Mutex<HulyCalendarCache>>) -> Self {
+    pub fn new(
+        accounts_url: String,
+        token_expiration: std::time::Duration,
+        calendar_cache: Arc<Mutex<HulyCalendarCache>>,
+    ) -> Self {
         Self {
             accounts_url,
+            token_expiration,
             calendar_cache,
         }
     }

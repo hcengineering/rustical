@@ -325,7 +325,8 @@ impl HulyStore {
                 .as_ref()
                 .ok_or_else(|| Error::InvalidData("Empty event id".into()))?;
             let instance_id = generate_id(user).await?;
-            let mut data = HulyEventCreateData::new(&user, cal_id, instance_id.as_str(), event_obj)?;
+            let mut data =
+                HulyEventCreateData::new(&user, cal_id, instance_id.as_str(), event_obj)?;
             data.participants = Some(old_event.data.participants.clone());
             data.original_start_time = Some(original_start_time);
             data.recurring_event_id = Some(event_id.to_string());
