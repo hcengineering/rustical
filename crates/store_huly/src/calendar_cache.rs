@@ -2,7 +2,7 @@ use crate::api::{
     find_all, FindOptions, FindParams, HulyEvent, HulyEventData, HulyEventSlim, Timestamp,
     CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE,
 };
-use crate::auth::{get_workspaces, HulyUser};
+use crate::auth::HulyUser;
 use crate::convert::calc_etag;
 use rustical_store::calendar::CalendarObjectType;
 use rustical_store::{Calendar, Error};
@@ -29,7 +29,6 @@ impl CacheKey {
 
 #[derive(Debug)]
 pub struct HulyCalendarCache {
-    accounts_url: String,
     calendars: HashMap<CacheKey, CachedCalendar>,
     users: HashMap<String, HulyUser>,
     invalidation_interval: Duration,
@@ -44,9 +43,8 @@ struct CachedCalendar {
 }
 
 impl HulyCalendarCache {
-    pub fn new(accounts_url: String, invalidation_interval: Duration) -> Self {
+    pub fn new(invalidation_interval: Duration) -> Self {
         Self {
-            accounts_url,
             calendars: HashMap::new(),
             users: HashMap::new(),
             invalidation_interval,
@@ -147,13 +145,13 @@ impl HulyCalendarCache {
     }
 
     pub(crate) async fn get_calendars(&mut self, user: &HulyUser) -> Result<Vec<Calendar>, Error> {
-        let workspaces = get_workspaces(&self.accounts_url, &user.token).await?;
-        let cals = workspaces
-            .into_iter()
-            .map(|(ws, _)| Calendar {
+        let cals = user
+            .workspaces
+            .iter()
+            .map(|ws| Calendar {
                 principal: user.id.to_string(),
-                id: ws.clone(),
-                displayname: Some(ws),
+                id: ws.url.clone(),
+                displayname: Some(ws.url.clone()),
                 order: 1,
                 synctoken: 0,
                 description: None,
