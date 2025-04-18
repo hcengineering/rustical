@@ -49,7 +49,7 @@ impl CalendarStore for HulyStore {
             "UPDATE_CALENDAR user_id={}, ws_url={}, calendar={:?}",
             user_id, ws_url, calendar
         );
-        Err(Error::ApiError("not implemented".into()))
+        Ok(())
     }
 
     #[instrument]
@@ -89,7 +89,79 @@ impl CalendarStore for HulyStore {
             "SYNC_CHANGES user_id={}, ws_url={}, synctoken={}",
             user_id, ws_url, synctoken
         );
-        Err(Error::ApiError("not implemented".into()))
+        let mut cache = self.calendar_cache.lock().await;
+        let user = cache.get_user(user_id, Some(ws_url))?;
+        let events = cache.get_events(&user).await?;
+        let cur_synctoken = cache.get_synctoken(&user).await?;
+        println!("cur_synctoken={}", cur_synctoken);
+
+        // If the synctoken is the same as the new one, no changes
+        if synctoken == cur_synctoken {
+            return Ok((vec![], vec![], cur_synctoken));
+        }
+
+        // Get the previous sync state if available
+        let previous_event_ids = if synctoken > 0 {
+            cache
+                .get_sync_state(synctoken as u64)
+                .await
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        // Get the current event IDs
+        let current_event_ids: Vec<String> = events.iter().map(|(id, _)| id.clone()).collect();
+
+        // Store the current sync state
+        cache
+            .set_sync_state(cur_synctoken as u64, current_event_ids.clone())
+            .await?;
+
+        // Calculate added and removed events
+        let mut added_events = Vec::new();
+        let mut removed_event_ids = Vec::new();
+
+        // Find added events
+        for (id, etag) in &events {
+            if !previous_event_ids.contains(id) {
+                added_events.push(CalendarObject {
+                    id: id.clone(),
+                    ics: "".to_string(),
+                    etag: Some(etag.clone()),
+                    data: CalendarObjectComponent::Event(EventObject {
+                        event: ical::generator::IcalEvent::default(),
+                        timezones: HashMap::new(),
+                    }),
+                });
+            }
+        }
+
+        // Find removed events
+        for id in &previous_event_ids {
+            if !current_event_ids.contains(id) {
+                removed_event_ids.push(id.clone());
+            }
+        }
+
+        // If this is the first sync, return all events
+        if synctoken <= 0 {
+            let cal_objs = events
+                .into_iter()
+                .map(|(id, etag)| CalendarObject {
+                    id,
+                    ics: "".to_string(),
+                    etag: Some(etag),
+                    data: CalendarObjectComponent::Event(EventObject {
+                        event: ical::generator::IcalEvent::default(),
+                        timezones: HashMap::new(),
+                    }),
+                })
+                .collect();
+            return Ok((cal_objs, vec![], cur_synctoken));
+        }
+
+        Ok((added_events, removed_event_ids, cur_synctoken))
     }
 
     #[instrument]
@@ -97,6 +169,8 @@ impl CalendarStore for HulyStore {
         println!("GET_OBJECTS user_id={}, ws_url={}", user_id, ws_url);
         let mut cache = self.calendar_cache.lock().await;
         let user = cache.get_user(user_id, Some(ws_url))?;
+        let cur_synctoken = cache.get_synctoken(&user).await?;
+        println!("cur_synctoken={}", cur_synctoken);
         let events = cache.get_events(&user).await?;
         // Calendar app uses this request only for getting event etags
         // Then it compares them with the etags it already has,
@@ -114,6 +188,7 @@ impl CalendarStore for HulyStore {
                 }),
             })
             .collect();
+
         Ok(cal_objs)
     }
 

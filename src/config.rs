@@ -90,6 +90,8 @@ pub struct HulyConfig {
     /// So after the first call we cache the data for a short period of time
     /// to make subsequent calls faster
     pub cache_invalidation_interval_secs: u64,
+    /// Path to store sync cache files
+    pub sync_cache_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

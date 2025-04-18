@@ -143,7 +143,7 @@ impl<'a> AccountClient<'a> {
             AccountRequestIntegrationSecretParams {
                 social_id,
                 kind: "caldav",
-                key: "caldav",
+                key: "password",
                 ..Default::default()
             },
         )

@@ -253,6 +253,7 @@ impl AuthenticationProvider for HulyAuthProvider {
             query: HashMap::from([("personUuid", login_info.account_uuid.as_str())]),
             options: Some(FindOptions {
                 projection: Some(HashMap::from([("_id", 1)])),
+                ..Default::default()
             }),
         };
         let persons = find_all::<HulyPerson>(&huly_user, &params).await?;

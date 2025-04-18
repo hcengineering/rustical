@@ -105,6 +105,44 @@ where
                 }
             }
 
+            // In macOS calendar user the Advanced mode when adding acount
+            // and provide these test credentials and use server url
+            // /caldav/principal/4b7c82f7-d3d4-43b6-ae10-e891fe1e0565
+            // let test_user_id = "4b7c82f7-d3d4-43b6-ae10-e891fe1e0565";
+            // let test_password = "kTY9gt5ez1uziC5vTgIDGzZi";
+            // let mut ws = None;
+            // let mut parts = req.request().path().split("/");
+            // let mut get_ws = false;
+            // while let Some(part) = parts.next() {
+            //     if part == "calendar" {
+            //         get_ws = true;
+            //     } else if get_ws {
+            //         ws = Some(part.to_string());
+            //         break;
+            //     }
+            // }
+            // let user_id = if let Some(ws) = ws {
+            //     &format!(
+            //         "{:?}|{}|{}",
+            //         req.request().connection_info().peer_addr(),
+            //         test_user_id,
+            //         ws
+            //     )
+            // } else {
+            //     &format!(
+            //         "{:?}|{}",
+            //         req.request().connection_info().peer_addr(),
+            //         test_user_id
+            //     )
+            // };
+            // if let Ok(Some(user)) = auth_provider
+            //     .validate_user_token(user_id, test_password)
+            //     .instrument(info_span!("validate_user_token"))
+            //     .await
+            // {
+            //     req.extensions_mut().insert(user);
+            // }
+
             // Extract user from session cookie
             if let Ok(session) = Session::extract(req.request()).await {
                 match session.get::<String>("user") {
