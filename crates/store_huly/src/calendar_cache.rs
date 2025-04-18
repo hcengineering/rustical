@@ -4,11 +4,13 @@ use crate::api::{
 };
 use crate::auth::HulyUser;
 use crate::convert::calc_etag;
+use crate::sync_cache::SyncCache;
 use rustical_store::calendar::CalendarObjectType;
 use rustical_store::{Calendar, Error};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::vec;
 
@@ -32,6 +34,7 @@ pub struct HulyCalendarCache {
     calendars: HashMap<CacheKey, CachedCalendar>,
     users: HashMap<String, HulyUser>,
     invalidation_interval: Duration,
+    sync_cache: Option<Arc<dyn SyncCache>>,
 }
 
 #[derive(Debug)]
@@ -43,11 +46,34 @@ struct CachedCalendar {
 }
 
 impl HulyCalendarCache {
-    pub fn new(invalidation_interval: Duration) -> Self {
+    pub fn new(invalidation_interval: Duration, sync_cache: Option<Arc<dyn SyncCache>>) -> Self {
         Self {
             calendars: HashMap::new(),
             users: HashMap::new(),
             invalidation_interval,
+            sync_cache,
+        }
+    }
+
+    /// Get the sync state for a given synctoken
+    pub async fn get_sync_state(&self, synctoken: u64) -> Result<Vec<String>, Error> {
+        if let Some(sync_cache) = &self.sync_cache {
+            sync_cache.get_sync_state(synctoken).await
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Set the sync state for a given synctoken
+    pub async fn set_sync_state(
+        &self,
+        synctoken: u64,
+        event_ids: Vec<String>,
+    ) -> Result<(), Error> {
+        if let Some(sync_cache) = &self.sync_cache {
+            sync_cache.set_sync_state(synctoken, event_ids).await
+        } else {
+            Ok(())
         }
     }
 
@@ -234,6 +260,15 @@ impl HulyCalendarCache {
 
         Ok(event)
     }
+
+    pub(crate) async fn get_synctoken(&mut self, user: &HulyUser) -> Result<i64, Error> {
+        let entry = if let Some(entry) = self.get_entry(user)? {
+            entry
+        } else {
+            self.add_entry(user).await?
+        };
+        Ok(entry.hash)
+    }
 }
 
 impl CachedCalendar {
@@ -267,6 +302,7 @@ impl CachedCalendar {
                     ("modifiedOn", 1),
                     ("recurringEventId", 1),
                 ])),
+                sort: Some(HashMap::from([("eventId", 1)])),
             }),
         };
         let events = find_all::<HulyEventSlim>(user, &params).await?;
