@@ -176,6 +176,7 @@ pub(crate) struct HulyEventCreateData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) recurring_event_id: Option<String>,
     pub(crate) access: String,
+    pub(crate) user: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -225,7 +226,9 @@ where
 #[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FindOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) projection: Option<HashMap<&'static str, u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sort: Option<HashMap<&'static str, u8>>,
 }
 
