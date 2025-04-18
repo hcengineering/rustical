@@ -222,10 +222,11 @@ where
 //    pub(crate) uuid: String,
 //}
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FindOptions {
     pub(crate) projection: Option<HashMap<&'static str, u8>>,
+    pub(crate) sort: Option<HashMap<&'static str, u8>>,
 }
 
 #[derive(Debug, Serialize)]
