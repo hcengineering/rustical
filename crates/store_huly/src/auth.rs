@@ -142,9 +142,8 @@ fn make_user(user: &HulyUser) -> User {
     }
 }
 
-#[async_trait]
-impl AuthenticationProvider for HulyAuthProvider {
-    async fn validate_user_token(
+impl HulyAuthProvider {
+    async fn validate_huly_user(
         &self,
         addr_id_ws: &str,
         password: &str,
@@ -189,14 +188,7 @@ impl AuthenticationProvider for HulyAuthProvider {
             social_key,
             password,
         )
-        .await;
-        if let Err(err) = &login_info {
-            tracing::error!("Error logging in: {:?}", err);
-            // AuthenticationMiddleware can't handle errors, it crashes the request thread
-            // Returning None will cause it to responce with 401 Unauthorized
-            return Ok(None);
-        }
-        let login_info = login_info.unwrap();
+        .await?;
 
         let mut huly_user = HulyUser {
             id: social_key.to_string(),
@@ -225,24 +217,15 @@ impl AuthenticationProvider for HulyAuthProvider {
             .find(|ws| ws.url == ws_url)
             .map(|ws| ws.uuid.clone());
         if ws_uuid.is_none() {
-            tracing::error!(
+            return Err(Error::ApiError(format!(
                 "CalDAV integration is not enabled for {} in workspace {}",
-                social_key,
-                ws_url
-            );
-            return Ok(None);
+                social_key, ws_url
+            )));
         }
 
         let account_client =
             AccountClient::new_with_token(&self.accounts_url, &login_info.token).await?;
-        let selected_ws = account_client.select_workspace(ws_url).await;
-        if let Err(err) = &selected_ws {
-            tracing::error!("Error selecting workspace: {:?}", err);
-            // AuthenticationMiddleware can't handle errors, it crashes the request thread
-            // Returning None will cause it to responce with 401 Unauthorized
-            return Ok(None);
-        }
-        let selected_ws = selected_ws.unwrap();
+        let selected_ws = account_client.select_workspace(ws_url).await?;
         huly_user.workspace_url = ws_url.to_string();
         huly_user.workspace_uuid = ws_uuid.unwrap();
         huly_user.token = selected_ws.0;
@@ -258,20 +241,38 @@ impl AuthenticationProvider for HulyAuthProvider {
         };
         let persons = find_all::<HulyPerson>(&huly_user, &params).await?;
         if persons.is_empty() {
-            tracing::error!(
-                "Error finding local person for account {}",
+            return Err(Error::ApiError(format!(
+                "No person found for account {}",
                 login_info.account_uuid
-            );
-            return Ok(None);
+            )));
         }
         let person = persons.get(0).unwrap();
         huly_user.contact_id = person.id.clone();
 
-        tracing::debug!("HULY_LOGIN {:?}", huly_user);
+        println!("*** HULY_LOGIN_SUCCESS {:?}", huly_user);
 
         let user = make_user(&huly_user);
         cache.set_user(social_key, Some(ws_url), huly_user);
         Ok(Some(user))
+    }
+}
+
+#[async_trait]
+impl AuthenticationProvider for HulyAuthProvider {
+    async fn validate_user_token(
+        &self,
+        addr_id_ws: &str,
+        password: &str,
+    ) -> Result<Option<User>, Error> {
+        let res = self.validate_huly_user(addr_id_ws, password).await;
+        if let Err(err) = &res {
+            tracing::error!("Error validating user token: {:?}", err);
+            // AuthenticationMiddleware can't handle errors, it crashes the request thread
+            // Returning None will cause it to responce with 401 Unauthorized
+            return Ok(None);
+        }
+        let user = res.unwrap();
+        Ok(user)
     }
 
     async fn get_principal(&self, principal: &str) -> Result<Option<User>, Error> {

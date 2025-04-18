@@ -336,6 +336,7 @@ impl HulyEventCreateData {
             // TODO: handle attachments
             time_zone: from_ical_get_timezone(event_obj)?,
             access: "owner".to_string(),
+            user: user.social_id.clone(),
             original_start_time: rules.is_some().then(|| date),
             rules,
             exdate: from_ical_get_exdate(&event_obj.event)?,
