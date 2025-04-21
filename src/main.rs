@@ -238,12 +238,12 @@ mod tests {
 */
 
 use crate::config::Config;
-use actix_web::http::KeepAlive;
 use actix_web::HttpServer;
+use actix_web::http::KeepAlive;
 use anyhow::Result;
 use app::make_app;
-use rustical_dav::push::push_notifier;
-use rustical_nextcloud_login::NextcloudFlows;
+use rustical_dav_push::notifier::push_notifier;
+use rustical_frontend::nextcloud_login::NextcloudFlows;
 use setup_tracing::setup_tracing;
 use std::sync::Arc;
 
@@ -273,7 +273,9 @@ fn load_confing_from_env() -> Config {
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
             ],
+            allow_password_login: true,
         },
+        oidc: None,
         tracing: config::TracingConfig {
             opentelemetry: false,
             log_level: std::env::var("LOG_LEVEL").unwrap_or("warn".to_string()),
@@ -349,6 +351,7 @@ async fn main() -> Result<()> {
             subscription_store.clone(),
             user_store.clone(),
             config.frontend.clone(),
+            None,
             config.nextcloud_login.clone(),
             nextcloud_flows.clone(),
         )
