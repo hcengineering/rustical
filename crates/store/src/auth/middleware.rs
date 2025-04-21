@@ -136,7 +136,7 @@ where
             //     )
             // };
             // if let Ok(Some(user)) = auth_provider
-            //     .validate_user_token(user_id, test_password)
+            //     .validate_app_token(user_id, test_password)
             //     .instrument(info_span!("validate_user_token"))
             //     .await
             // {

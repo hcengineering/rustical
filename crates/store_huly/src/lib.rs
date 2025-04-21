@@ -1,6 +1,6 @@
 pub use calendar_cache::HulyCalendarCache;
 use std::sync::Arc;
-pub use sync_cache::{FileSyncCache, SyncCache};
+pub use sync_cache::{FileSyncCache, HttpSyncCache, SyncCache};
 use tokio::sync::Mutex;
 
 mod account_api;

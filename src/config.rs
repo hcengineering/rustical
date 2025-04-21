@@ -92,6 +92,9 @@ pub struct HulyConfig {
     pub cache_invalidation_interval_secs: u64,
     /// Path to store sync cache files
     pub sync_cache_path: Option<String>,
+    /// URL to the key-value HTTP service for sync cache
+    /// If provided, this will be used instead of file-based sync cache
+    pub kv_url: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]

@@ -297,6 +297,7 @@ fn load_confing_from_env() -> Config {
             server_secret: std::env::var("SERVER_SECRET").unwrap_or("secret".to_string()),
             cache_invalidation_interval_secs: 5,
             sync_cache_path: std::env::var("SYNC_CACHE_PATH").ok(),
+            kv_url: std::env::var("KV_URL").ok(),
         },
     }
 }
@@ -309,7 +310,12 @@ async fn main() -> Result<()> {
 
     let calendar_cache = rustical_store_huly::HulyCalendarCache::new(
         std::time::Duration::from_secs(config.huly.cache_invalidation_interval_secs),
-        if let Some(base_path) = config.huly.sync_cache_path {
+        if let Some(kv_url) = &config.huly.kv_url {
+            let http_sync_cache = rustical_store_huly::HttpSyncCache::new(kv_url.clone(), config.huly.server_secret.clone());
+            let sync_cache = Arc::new(http_sync_cache);
+            Some(sync_cache)
+        } else if let Some(base_path) = &config.huly.sync_cache_path {
+            println!("Using file-based sync cache at {}", base_path);
             let file_sync_cache = rustical_store_huly::FileSyncCache::new(base_path);
             let sync_cache = Arc::new(file_sync_cache);
             Some(sync_cache)
