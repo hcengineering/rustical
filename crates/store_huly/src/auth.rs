@@ -13,7 +13,7 @@ use rustical_store::{
 use std::{collections::HashMap, time::SystemTime};
 
 #[derive(Debug, Clone)]
-pub(crate) struct HulyUser {
+pub struct HulyUser {
     pub(crate) id: String,
     pub(crate) contact_id: String,
     pub(crate) social_id: String,
