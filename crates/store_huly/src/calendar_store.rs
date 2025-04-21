@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use ical::parser::Component;
 use rustical_store::calendar::{CalendarObjectComponent, EventObject};
 use rustical_store::{Calendar, CalendarObject, CalendarStore, Error};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::instrument;
 
 #[async_trait]
@@ -93,32 +93,22 @@ impl CalendarStore for HulyStore {
         let user = cache.get_user(user_id, Some(ws_url))?;
         let events = cache.get_events(&user).await?;
         let cur_synctoken = cache.get_synctoken(&user).await?;
-        println!("cur_synctoken={}", cur_synctoken);
+        //println!("cur_synctoken={}", cur_synctoken);
 
         // If the synctoken is the same as the new one, no changes
         if synctoken == cur_synctoken {
             return Ok((vec![], vec![], cur_synctoken));
         }
 
-        // Get the previous sync state if available
-        let previous_event_ids = if synctoken > 0 {
-            cache
-                .get_sync_state(synctoken as u64)
-                .await
-                .unwrap_or_default()
-        } else {
-            vec![]
-        };
+        let previous_events = cache
+            .get_sync_state(&user, synctoken)
+            .await
+            .unwrap_or_default();
 
-        // Get the current event IDs
-        let current_event_ids: Vec<String> = events.iter().map(|(id, _)| id.clone()).collect();
+        let current_event_ids: HashSet<String> = events.iter().map(|(id, _)| id.clone()).collect();
+        let previous_event_ids: HashSet<String> =
+            previous_events.iter().map(|(id, _)| id.clone()).collect();
 
-        // Store the current sync state
-        cache
-            .set_sync_state(cur_synctoken as u64, current_event_ids.clone())
-            .await?;
-
-        // Calculate added and removed events
         let mut added_events = Vec::new();
         let mut removed_event_ids = Vec::new();
 
@@ -138,27 +128,10 @@ impl CalendarStore for HulyStore {
         }
 
         // Find removed events
-        for id in &previous_event_ids {
-            if !current_event_ids.contains(id) {
-                removed_event_ids.push(id.clone());
+        for prev_id in &previous_event_ids {
+            if !current_event_ids.contains(prev_id) {
+                removed_event_ids.push(prev_id.clone());
             }
-        }
-
-        // If this is the first sync, return all events
-        if synctoken <= 0 {
-            let cal_objs = events
-                .into_iter()
-                .map(|(id, etag)| CalendarObject {
-                    id,
-                    ics: "".to_string(),
-                    etag: Some(etag),
-                    data: CalendarObjectComponent::Event(EventObject {
-                        event: ical::generator::IcalEvent::default(),
-                        timezones: HashMap::new(),
-                    }),
-                })
-                .collect();
-            return Ok((cal_objs, vec![], cur_synctoken));
         }
 
         Ok((added_events, removed_event_ids, cur_synctoken))
@@ -169,8 +142,8 @@ impl CalendarStore for HulyStore {
         println!("GET_OBJECTS user_id={}, ws_url={}", user_id, ws_url);
         let mut cache = self.calendar_cache.lock().await;
         let user = cache.get_user(user_id, Some(ws_url))?;
-        let cur_synctoken = cache.get_synctoken(&user).await?;
-        println!("cur_synctoken={}", cur_synctoken);
+        //let cur_synctoken = cache.get_synctoken(&user).await?;
+        //println!("cur_synctoken={}", cur_synctoken);
         let events = cache.get_events(&user).await?;
         // Calendar app uses this request only for getting event etags
         // Then it compares them with the etags it already has,

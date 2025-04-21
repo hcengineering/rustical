@@ -4,12 +4,12 @@ use crate::api::{
 };
 use crate::auth::HulyUser;
 use crate::convert::calc_etag;
-use crate::sync_cache::SyncCache;
+use crate::sync_cache::{SyncCache, calculate_hash};
 use rustical_store::calendar::CalendarObjectType;
 use rustical_store::{Calendar, Error};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::Hash;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::vec;
@@ -39,7 +39,7 @@ pub struct HulyCalendarCache {
 
 #[derive(Debug)]
 struct CachedCalendar {
-    hash: i64,
+    synctoken: i64,
     fetched_at: SystemTime,
     calendar_id: String,
     events: Vec<(String, Timestamp)>,
@@ -55,27 +55,30 @@ impl HulyCalendarCache {
         }
     }
 
-    /// Get the sync state for a given synctoken
-    pub async fn get_sync_state(&self, synctoken: u64) -> Result<Vec<String>, Error> {
+    pub async fn get_sync_state(
+        &self,
+        user: &HulyUser,
+        synctoken: i64,
+    ) -> Result<Vec<(String, Timestamp)>, Error> {
         if let Some(sync_cache) = &self.sync_cache {
-            sync_cache.get_sync_state(synctoken).await
+            sync_cache.get_sync_state(user, synctoken).await
         } else {
             Ok(vec![])
         }
     }
 
-    /// Set the sync state for a given synctoken
-    pub async fn set_sync_state(
-        &self,
-        synctoken: u64,
-        event_ids: Vec<String>,
-    ) -> Result<(), Error> {
-        if let Some(sync_cache) = &self.sync_cache {
-            sync_cache.set_sync_state(synctoken, event_ids).await
-        } else {
-            Ok(())
-        }
-    }
+    // pub async fn set_sync_state(
+    //     &self,
+    //     user: &HulyUser,
+    //     synctoken: i64,
+    //     events: &Vec<(String, Timestamp)>,
+    // ) -> Result<(), Error> {
+    //     if let Some(sync_cache) = &self.sync_cache {
+    //         sync_cache.set_sync_state(user, synctoken, &events).await
+    //     } else {
+    //         Ok(())
+    //     }
+    // }
 
     pub(crate) fn get_user(&self, user_id: &str, ws_url: Option<&str>) -> Result<HulyUser, Error> {
         if let Some(ws_url) = ws_url {
@@ -114,8 +117,32 @@ impl HulyCalendarCache {
 
     async fn add_entry(&mut self, user: &HulyUser) -> Result<&CachedCalendar, Error> {
         let key = CacheKey::new(user)?;
-        self.calendars
-            .insert(key.clone(), CachedCalendar::new(user).await?);
+        let mut calendar = CachedCalendar::new(user).await?;
+        let mut synctoken: i64 = 1;
+        let current_hash = calculate_hash(&calendar.events);
+        if let Some(sync_cache) = &self.sync_cache {
+            let latest_synctoken = sync_cache.get_latest_synctoken(user).await?;
+            if latest_synctoken > 0 {
+                let previous_events = sync_cache.get_sync_state(user, latest_synctoken).await?;
+                let previous_hash = calculate_hash(&previous_events);
+                if current_hash != previous_hash {
+                    synctoken = latest_synctoken + 1;
+                    sync_cache
+                        .set_sync_state(user, synctoken, &calendar.events)
+                        .await?;
+                } else {
+                    synctoken = latest_synctoken;
+                }
+            } else {
+                sync_cache
+                    .set_sync_state(user, synctoken, &calendar.events)
+                    .await?;
+            }
+        } else {
+            synctoken = current_hash as i64;
+        }
+        calendar.synctoken = synctoken;
+        self.calendars.insert(key.clone(), calendar);
         Ok(self.calendars.get(&key).unwrap())
     }
 
@@ -157,7 +184,7 @@ impl HulyCalendarCache {
             id: user.workspace_url.clone(),
             displayname: Some(user.workspace_url.clone()),
             order: 1,
-            synctoken: entry.hash,
+            synctoken: entry.synctoken,
             description: None,
             color: None,
             timezone: None,
@@ -267,7 +294,7 @@ impl HulyCalendarCache {
         } else {
             self.add_entry(user).await?
         };
-        Ok(entry.hash)
+        Ok(entry.synctoken)
     }
 }
 
@@ -302,7 +329,7 @@ impl CachedCalendar {
                     ("modifiedOn", 1),
                     ("recurringEventId", 1),
                 ])),
-                sort: Some(HashMap::from([("eventId", 1)])),
+                ..Default::default()
             }),
         };
         let events = find_all::<HulyEventSlim>(user, &params).await?;
@@ -329,16 +356,15 @@ impl CachedCalendar {
             }
         }
 
-        let events = event_dates
+        let mut events = event_dates
             .into_iter()
             .map(|(id, dt)| (id, dt))
             .collect::<Vec<_>>();
-        let mut s = DefaultHasher::new();
-        events.hash(&mut s);
-        let hash = s.finish();
+
+        events.sort_by(|e1, e2| e1.0.cmp(&e2.0));
 
         Ok(Self {
-            hash: hash as i64,
+            synctoken: 1, // This will be set by HulyCalendarCache::add_entry
             fetched_at: SystemTime::now(),
             calendar_id,
             events,
