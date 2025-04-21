@@ -6,11 +6,11 @@ use crate::convert_time::{
     from_ical_get_timezone,
 };
 use ical::generator::{Emitter, IcalCalendarBuilder, IcalEvent, IcalEventBuilder};
-use ical::parser::ical::component::{IcalAlarm, IcalTimeZone};
 use ical::parser::Component;
+use ical::parser::ical::component::{IcalAlarm, IcalTimeZone};
 use ical::property::Property;
 use ical::{ical_param, ical_property};
-use rustical_store::calendar::{parse_duration, CalendarObjectComponent, EventObject};
+use rustical_store::calendar::{CalendarObjectComponent, EventObject, parse_duration};
 use rustical_store::{CalendarObject, Error};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

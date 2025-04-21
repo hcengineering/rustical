@@ -448,6 +448,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compression"
+version = "0.4.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59a194f9d963d8099596278594b3107448656ba73831c9d8c783e613ce86da64"
+dependencies = [
+ "flate2",
+ "futures-core",
+ "memchr",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2679,7 +2692,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.2",
  "rand 0.9.1",
- "ring",
+ "ring 0.17.14",
  "rustc-hash",
  "rustls",
  "rustls-pki-types",
@@ -3187,7 +3200,7 @@ dependencies = [
  "async-trait",
  "derive_more 2.0.1",
  "futures-util",
- "itertools",
+ "itertools 0.14.0",
  "log",
  "quick-xml",
  "reqwest",

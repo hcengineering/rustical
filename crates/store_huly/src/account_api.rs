@@ -1,4 +1,4 @@
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{EncodingKey, Header, encode};
 use rustical_store::Error;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

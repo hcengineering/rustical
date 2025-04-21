@@ -1,7 +1,7 @@
 use super::HulyStore;
 use crate::api::{
-    generate_id, tx_create_event, tx_delete_event, tx_update_event, HulyEvent, HulyEventCreateData,
-    HulyEventUpdateData, CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE,
+    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE, HulyEvent, HulyEventCreateData,
+    HulyEventUpdateData, generate_id, tx_create_event, tx_delete_event, tx_update_event,
 };
 use crate::auth::HulyUser;
 use crate::convert_time::from_ical_get_timestamp_required;
@@ -240,7 +240,7 @@ impl CalendarStore for HulyStore {
                 _ => {
                     return Err(Error::InvalidData(
                         "invalid object type, must be event(s)".into(),
-                    ))
+                    ));
                 }
             }
         } else {
