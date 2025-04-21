@@ -1,14 +1,14 @@
 use super::HulyAuthProvider;
 use crate::{
     account_api::{
-        generate_token, AccountClient, PersonId, PersonUuid, TokenClaims, WorkspaceUuid,
+        AccountClient, PersonId, PersonUuid, TokenClaims, WorkspaceUuid, generate_token,
     },
-    api::{find_all, FindOptions, FindParams, HulyPerson, CLASS_PERSON},
+    api::{CLASS_PERSON, FindOptions, FindParams, HulyPerson, find_all},
 };
 use async_trait::async_trait;
 use rustical_store::{
-    auth::{AuthenticationProvider, User},
     Error,
+    auth::{AuthenticationProvider, User},
 };
 use std::{collections::HashMap, time::SystemTime};
 
@@ -259,7 +259,27 @@ impl HulyAuthProvider {
 
 #[async_trait]
 impl AuthenticationProvider for HulyAuthProvider {
-    async fn validate_user_token(
+    async fn get_principals(&self) -> Result<Vec<User>, Error> {
+        return Ok(vec![]);
+    }
+
+    async fn get_principal(&self, principal: &str) -> Result<Option<User>, Error> {
+        let cache = self.calendar_cache.lock().await;
+        if let Some(huly_user) = cache.try_get_user(principal, None) {
+            return Ok(Some(make_user(&huly_user)));
+        }
+        Ok(None)
+    }
+
+    async fn remove_principal(&self, _id: &str) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn insert_principal(&self, _user: User) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn validate_app_token(
         &self,
         addr_id_ws: &str,
         password: &str,
@@ -275,20 +295,32 @@ impl AuthenticationProvider for HulyAuthProvider {
         Ok(user)
     }
 
-    async fn get_principal(&self, principal: &str) -> Result<Option<User>, Error> {
-        let cache = self.calendar_cache.lock().await;
-        if let Some(huly_user) = cache.try_get_user(principal, None) {
-            return Ok(Some(make_user(&huly_user)));
+    async fn validate_password(
+        &self,
+        addr_id_ws: &str,
+        password: &str,
+    ) -> Result<Option<User>, Error> {
+        let res = self.validate_huly_user(addr_id_ws, password).await;
+        if let Err(err) = &res {
+            tracing::error!("Error validating user token: {:?}", err);
+            // AuthenticationMiddleware can't handle errors, it crashes the request thread
+            // Returning None will cause it to responce with 401 Unauthorized
+            return Ok(None);
         }
-        Ok(None)
+        let user = res.unwrap();
+        Ok(user)
     }
 
     async fn add_app_token(
         &self,
         _user_id: &str,
-        _name: String,
+        name: String,
         _token: String,
-    ) -> Result<(), Error> {
+    ) -> Result<String, Error> {
+        return Ok(name);
+    }
+
+    async fn remove_app_token(&self, _user_id: &str, _token_id: &str) -> Result<(), Error> {
         Ok(())
     }
 }

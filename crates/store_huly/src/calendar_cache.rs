@@ -1,14 +1,14 @@
 use crate::api::{
-    find_all, FindOptions, FindParams, HulyEvent, HulyEventData, HulyEventSlim, Timestamp,
-    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE,
+    CLASS_EVENT, CLASS_RECURRING_EVENT, CLASS_RECURRING_INSTANCE, FindOptions, FindParams,
+    HulyEvent, HulyEventData, HulyEventSlim, Timestamp, find_all,
 };
 use crate::auth::HulyUser;
 use crate::convert::calc_etag;
 use crate::sync_cache::SyncCache;
 use rustical_store::calendar::CalendarObjectType;
 use rustical_store::{Calendar, Error};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};

@@ -2,12 +2,12 @@
 use crate::api::Timestamp;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use ical::generator::IcalEvent;
-use ical::parser::ical::component::IcalTimeZone;
 use ical::parser::Component;
+use ical::parser::ical::component::IcalTimeZone;
 use ical::property::Property;
 use ical::{ical_param, ical_property};
-use rustical_store::calendar::{parse_duration, EventObject};
 use rustical_store::Error;
+use rustical_store::calendar::{EventObject, parse_duration};
 use std::collections::HashMap;
 use std::str::FromStr;
 
