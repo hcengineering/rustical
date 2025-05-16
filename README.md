@@ -55,6 +55,17 @@ For some good reason, this does not work with locally run dev CalDAV server. So 
 
 And event then, it's better to disable authentication :) (see commented code in `crates/store/src/auth/middleware.rs`).
 
+## Deployment
+
+Add and push a version tag:
+
+```
+git tag -a v0.0.3
+git push origin v0.0.3
+```
+
+Build should start on GitHub automatically. Target image has the `service_` prefix to mark it as "internal". Then update the version tag in the [platform](https://github.com/hcengineering/platform/tree/develop/pods/external/services.d). The sevice will be automatically pulled, retagged with the lates platform version, and deployed on the cluster.
+
 <p>&nbsp;</p>
 <p>&nbsp;</p>
 <p>&nbsp;</p>
