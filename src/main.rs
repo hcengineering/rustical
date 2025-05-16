@@ -311,6 +311,7 @@ async fn main() -> Result<()> {
     let calendar_cache = rustical_store_huly::HulyCalendarCache::new(
         std::time::Duration::from_secs(config.huly.cache_invalidation_interval_secs),
         if let Some(kv_url) = &config.huly.kv_url {
+            println!("Using kvs-based sync cache: {}", kv_url);
             let http_sync_cache = rustical_store_huly::HttpSyncCache::new(kv_url.clone(), config.huly.server_secret.clone());
             let sync_cache = Arc::new(http_sync_cache);
             Some(sync_cache)
@@ -320,6 +321,7 @@ async fn main() -> Result<()> {
             let sync_cache = Arc::new(file_sync_cache);
             Some(sync_cache)
         } else {
+            println!("Do not use sync cache");
             None
         },
     );
